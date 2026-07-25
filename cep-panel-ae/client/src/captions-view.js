@@ -1113,7 +1113,13 @@ function _wireTabStyle(v) {
   const fontInput = v.querySelector('#cap-font-ps');
   if (fontInput) fontInput.onchange = (e) => { S.fontPS = e.target.value || 'Arial-BoldMT'; _updatePreview(); };
 
-  _wireRange(v, '#cap-font-size', (val) => { S.fontSize = parseInt(val, 10); return S.fontSize + 'px'; });
+  // Font size now decides words-per-caption (width-aware grouping), so the
+  // caption list must rebuild too — not just the canvas.
+  _wireRange(v, '#cap-font-size', (val) => {
+    S.fontSize = parseInt(val, 10);
+    _refreshContentList();
+    return S.fontSize + 'px';
+  });
   _wireColor(v, '#cap-fill-color', (c) => { S.fillColor = c; });
   _wireColor(v, '#cap-stroke-color', (c) => { S.strokeColor = c; });
   _wireRange(v, '#cap-stroke-width', (val) => { S.strokeWidth = parseInt(val, 10); return S.strokeWidth + 'px'; });

@@ -1109,7 +1109,7 @@ function ef_fitToBox(layer, comp, cfg, atTime) {
    prefixW/selfW are indexed by word index into g.words. */
 function ef_measureWordSpans(comp, g, cfg, lines, lineTexts) {
     var allCaps = cfg.allCaps !== false;
-    var lineWidths = [], prefixW = [], selfW = [];
+    var lineWidths = [], lineHeights = [], prefixW = [], selfW = [];
     var temp = null;
     try {
         temp = comp.layers.addText("m");
@@ -1118,7 +1118,9 @@ function ef_measureWordSpans(comp, g, cfg, lines, lineTexts) {
         for (var li = 0; li < lines.length; li++) {
             var lt = allCaps ? String(lineTexts[li]).toUpperCase() : String(lineTexts[li]);
             st.setValue(lt);
-            lineWidths.push(temp.sourceRectAtTime(0, false).width);
+            var lineRect = temp.sourceRectAtTime(0, false);
+            lineWidths.push(lineRect.width);
+            lineHeights.push(lineRect.height);   // real glyph box, not a fontSize guess
             var prefix = "";
             for (var wi = lines[li].startIdx; wi <= lines[li].endIdx; wi++) {
                 var wt = String(g.words[wi].text);
@@ -1133,7 +1135,7 @@ function ef_measureWordSpans(comp, g, cfg, lines, lineTexts) {
     } finally {
         if (temp) { try { temp.remove(); } catch (eT) {} }
     }
-    return { lineWidths: lineWidths, prefixW: prefixW, selfW: selfW };
+    return { lineWidths: lineWidths, lineHeights: lineHeights, prefixW: prefixW, selfW: selfW };
 }
 
 /* Pure geometry (node-tested): word spans in comp coords from measured
@@ -1175,9 +1177,11 @@ function ef_addPillsToCaption(comp, textLayer, g, cfg, lines, lineTexts, fit) {
     var tOut = (g.tOut != null) ? g.tOut : g.end + 0.3;
     var padX = (cfg.fontSize || 80) * 0.28 * fit;
     var padY = (cfg.fontSize || 80) * 0.16 * fit;
-    var pillH = (cfg.fontSize || 80) * fit + padY * 2;
     var placed = 0;
     for (var li = 0; li < lines.length; li++) {
+        // Pill height from THIS line's measured glyph box (descenders and
+        // caps change it) instead of assuming fontSize.
+        var pillH = ((meas.lineHeights && meas.lineHeights[li]) || (cfg.fontSize || 80)) * fit + padY * 2;
         var i = lines[li].startIdx;
         while (i <= lines[li].endIdx) {
             if (!g.words[i].pill || !spans[i]) { i++; continue; }

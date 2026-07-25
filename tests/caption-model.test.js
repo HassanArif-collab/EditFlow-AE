@@ -432,3 +432,38 @@ test('mergeOrphans off by default leaves the orphan alone', () => {
   ];
   assert.equal(M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4 }).length, 2);
 });
+
+/* ── platform safe zones ── */
+const SZ = loadEsm(path.resolve(__dirname, '..', 'cep-panel-ae', 'client', 'src', 'safe-zones.js'));
+
+test('every safe-zone rect stays inside the frame', () => {
+  for (const [key, zone] of Object.entries(SZ.SAFE_ZONES)) {
+    for (const r of zone.unsafe) {
+      assert.ok(r.x >= 0 && r.y >= 0, `${key} ${r.tag} negative origin`);
+      assert.ok(r.x + r.w <= 1.0001 && r.y + r.h <= 1.0001, `${key} ${r.tag} overflows frame`);
+      assert.ok(r.w > 0 && r.h > 0, `${key} ${r.tag} empty`);
+    }
+  }
+});
+
+test('a caption box low on screen hits the platform caption zone', () => {
+  const hits = SZ.boxIntersectsUnsafe('tiktok', { x: 0.1, y: 0.75, w: 0.5, h: 0.1 });
+  assert.ok(hits.length > 0);
+  assert.match(hits[0].tag, /caption/);
+});
+
+test('a centred mid-frame box is safe on every platform', () => {
+  for (const key of Object.keys(SZ.SAFE_ZONES)) {
+    assert.equal(SZ.boxIntersectsUnsafe(key, { x: 0.15, y: 0.45, w: 0.5, h: 0.1 }).length, 0, key);
+  }
+});
+
+test('a right-edge box hits the action rail (like/comment buttons)', () => {
+  const hits = SZ.boxIntersectsUnsafe('reels', { x: 0.75, y: 0.45, w: 0.2, h: 0.1 });
+  assert.ok(hits.length > 0);
+  assert.match(hits[0].tag, /rail/);
+});
+
+test('unknown zone key returns no hits instead of throwing', () => {
+  assert.deepEqual(SZ.boxIntersectsUnsafe('none', { x: 0, y: 0, w: 1, h: 1 }), []);
+});

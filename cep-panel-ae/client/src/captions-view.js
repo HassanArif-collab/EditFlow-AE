@@ -28,6 +28,7 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
+import { SAFE_ZONES, boxIntersectsUnsafe, drawSafeZones } from './safe-zones.js';
 import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, clampBlockY, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -73,6 +74,7 @@ const S = {
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
   boxWidthPct: 90, alignEngine: 'auto', customVocab: '', mergeOrphans: true,
+  safeZone: 'none', _showBox: false,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
@@ -99,6 +101,7 @@ const SETTINGS_KEYS = [
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
   'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab', 'mergeOrphans',
+  'safeZone',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -300,14 +303,28 @@ function _renderPreview() {
       <button id="cap-preview-play" class="cap-play-btn" ${dis}>${S._previewPlaying ? '⏸' : '▶'}</button>
       <input type="range" id="cap-preview-seek" class="cap-range" min="0" max="${dur}" step="0.01" value="${t}" ${dis} />
       <span class="cap-preview-time" id="cap-preview-time">${t.toFixed(1)}s / ${dur.toFixed(1)}s</span>
+      <button id="cap-box-toggle" class="cap-icon-btn ${S._showBox ? 'active' : ''}" title="Show the caption box — drag it to move, drag its side handles to resize">🔲</button>
+      ${ch > cw ? `<select id="cap-safe-zone" class="cap-select" style="width:auto;padding:2px 4px;font-size:10px;" title="Show where each app's buttons cover your video">
+        <option value="none" ${!S.safeZone || S.safeZone === 'none' ? 'selected' : ''}>No overlay</option>
+        ${Object.entries(SAFE_ZONES).map(([k, z]) => `<option value="${k}" ${S.safeZone === k ? 'selected' : ''}>${z.label}</option>`).join('')}
+      </select>` : ''}
       ${!window.__adobe_cep__ ? `<select id="cap-dev-aspect" class="cap-select" style="width:auto;padding:2px 4px;font-size:10px;" title="No AE detected — pick the comp aspect to preview">
         <option value="1920x1080" ${cw === 1920 ? 'selected' : ''}>16:9</option>
         <option value="1080x1920" ${cw === 1080 && ch === 1920 ? 'selected' : ''}>9:16</option>
         <option value="1080x1080" ${cw === 1080 && ch === 1080 ? 'selected' : ''}>1:1</option>
       </select>` : ''}
     </div>
+    ${_safeZoneWarningHTML()}
     <div class="cap-preview-resize-bar" title="Drag to resize preview"><div></div></div>
   </div>`;
+}
+
+/* One-line warning when the caption box sits under platform chrome. */
+function _safeZoneWarningHTML() {
+  const hits = _boxUnsafeHits();
+  if (!hits.length) return '';
+  const zone = SAFE_ZONES[S.safeZone];
+  return `<div class="cap-safezone-warn">⚠ On ${_esc(zone ? zone.label : S.safeZone)}, your captions sit under: ${_esc(hits.map((r) => r.tag).join(', '))} — drag the box up or narrower.</div>`;
 }
 
 function _renderTabBar() {
@@ -797,6 +814,72 @@ function _wirePreview(v) {
     S.compInfo = { width: w2, height: h2, frameRate: 30, name: 'browser-dev', duration: S.duration || 10 };
     _render();
   };
+  const boxToggle = v.querySelector('#cap-box-toggle');
+  if (boxToggle) boxToggle.onclick = () => {
+    S._showBox = !S._showBox;
+    boxToggle.classList.toggle('active', S._showBox);
+    _updatePreview();
+  };
+  const szSel = v.querySelector('#cap-safe-zone');
+  if (szSel) szSel.onchange = (e) => {
+    S.safeZone = e.target.value;
+    S._showBox = S._showBox || S.safeZone !== 'none';   // box is the point of the check
+    _render();
+  };
+
+  // Drag the caption box directly on the canvas: side handles resize,
+  // anywhere inside moves it. Beats guessing with three % sliders.
+  const canvas = v.querySelector('#cap-preview-canvas');
+  if (canvas) {
+    let mode = null;
+    const canvasPos = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - r.left) * (canvas.width / r.width),
+        y: (e.clientY - r.top) * (canvas.height / r.height),
+      };
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!S._showBox) return;
+      const p = canvasPos(e);
+      mode = _boxHit(p.x, p.y, canvas.width, canvas.height);
+      if (!mode) return;
+      e.preventDefault(); e.stopPropagation();
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!S._showBox) return;
+      const p = canvasPos(e);
+      if (!mode) {
+        const hit = _boxHit(p.x, p.y, canvas.width, canvas.height);
+        canvas.style.cursor = hit === 'move' ? 'move' : (hit ? 'ew-resize' : '');
+        return;
+      }
+      const cx = canvas.width * (S.posX / 100);
+      if (mode === 'left' || mode === 'right') {
+        const halfPct = Math.abs(p.x - cx) / canvas.width * 100;
+        S.boxWidthPct = Math.max(60, Math.min(100, Math.round(halfPct * 2)));
+        const lbl = document.getElementById('cap-box-width-val');
+        if (lbl) lbl.textContent = S.boxWidthPct + '%';
+        const rng = document.getElementById('cap-box-width');
+        if (rng) rng.value = S.boxWidthPct;
+      } else {
+        S.posX = Math.max(5, Math.min(95, Math.round(p.x / canvas.width * 100)));
+        S.posY = Math.max(5, Math.min(95, Math.round(p.y / canvas.height * 100)));
+      }
+      _updatePreview();
+    });
+    const endDrag = (e) => {
+      if (!mode) return;
+      mode = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+      _refreshContentList();   // grouping depends on box width
+      _render();
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  }
+
   // Resize drag — start from any point inside the preview section
   const sec = v.querySelector('.cap-preview-section');
   const hideFrame = v.querySelector('#cap-frame-hide');
@@ -1670,6 +1753,9 @@ function _updatePreview() {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`(no caption at ${t.toFixed(2)}s)`, w / 2, h / 2);
   }
+  // Overlays last so they sit above the captions they describe.
+  if (S.safeZone && S.safeZone !== 'none') drawSafeZones(ctx, w, h, S.safeZone);
+  if (S._showBox) _drawBoxOverlay(ctx, w, h);
 }
 
 /* Draw one caption group at time t. Every pixel value scales by ONE factor
@@ -1846,6 +1932,69 @@ function _boxOpts() {
 
 function _wrapForBox(g) {
   return wrapLines(g, _boxOpts());
+}
+
+/* The caption box as comp FRACTIONS — what the safe-zone check needs. */
+function _boxFractions() {
+  const compH = (S.compInfo && S.compInfo.height) || 1080;
+  const lineHeightFrac = (S.fontSize * LAYOUT.lineHeightEm) / compH;
+  const hFrac = Math.max(lineHeightFrac, S.maxLinesPerSegment * lineHeightFrac);
+  const wFrac = S.boxWidthPct / 100;
+  return {
+    x: S.posX / 100 - wFrac / 2,
+    y: S.posY / 100 - hFrac / 2,
+    w: wFrac, h: hFrac,
+  };
+}
+
+function _boxUnsafeHits() {
+  if (!S.safeZone || S.safeZone === 'none') return [];
+  return boxIntersectsUnsafe(S.safeZone, _boxFractions());
+}
+
+/* The caption box, drawn over the preview: a dashed rect with two side
+   handles. Seeing and dragging the box is the whole point — the % slider
+   never told anyone where their captions would actually sit. */
+function _drawBoxOverlay(ctx, w, h) {
+  const px = w / ((S.compInfo && S.compInfo.width) || 1920);
+  const bw = w * (S.boxWidthPct / 100);
+  const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
+  const bh = Math.max(lineHeight, S.maxLinesPerSegment * lineHeight);
+  const cx = w * (S.posX / 100);
+  const cy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: S.maxLinesPerSegment, lineHeight, marginPct: 0.03,
+  });
+  const warn = _boxUnsafeHits().length > 0;
+  ctx.save();
+  ctx.strokeStyle = warn ? 'rgba(245,158,11,.95)' : 'rgba(91,141,239,.9)';
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - bw / 2, cy - bh / 2, bw, bh);
+  ctx.setLineDash([]);
+  ctx.fillStyle = warn ? '#f59e0b' : '#5b8def';
+  for (const hx of [cx - bw / 2, cx + bw / 2]) ctx.fillRect(hx - 3, cy - 11, 6, 22);
+  ctx.restore();
+}
+
+/* Hit-test in canvas pixels: 'left' | 'right' | 'move' | null. */
+function _boxHit(x, y, w, h) {
+  const px = w / ((S.compInfo && S.compInfo.width) || 1920);
+  const bw = w * (S.boxWidthPct / 100);
+  const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
+  const bh = Math.max(lineHeight, S.maxLinesPerSegment * lineHeight);
+  const cx = w * (S.posX / 100);
+  const cy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: S.maxLinesPerSegment, lineHeight, marginPct: 0.03,
+  });
+  const near = 8;
+  if (Math.abs(y - cy) <= bh / 2 + near) {
+    if (Math.abs(x - (cx - bw / 2)) <= near) return 'left';
+    if (Math.abs(x - (cx + bw / 2)) <= near) return 'right';
+  }
+  if (x > cx - bw / 2 && x < cx + bw / 2 && Math.abs(y - cy) <= bh / 2) return 'move';
+  return null;
 }
 
 function _pillScale(pillStart, t) {

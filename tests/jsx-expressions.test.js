@@ -167,3 +167,7 @@ test('missing/short markers fall back to baked times', () => {
   const a = evalMarkerExpr(expr, { time: 10.75, textIndex: 2, inPoint: 10, markerTimes: [] });
   assert.deepEqual(a, [0, 0, 0], 'fully entered per baked time');
 });
+
+test('ef_readCaptionTimings exists (read-back path for hand-tuned timing)', () => {
+  assert.equal(typeof sandbox.ef_readCaptionTimings, 'function');
+});

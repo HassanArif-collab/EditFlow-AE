@@ -651,6 +651,14 @@ body { display: flex; flex-direction: column; }
 .cap-group-divider { padding: 4px 8px; font: 600 9px monospace; color: var(--text-3); background: rgba(255,255,255,.03); border-bottom: 1px solid rgba(255,255,255,.06); display: flex; justify-content: space-between; cursor: pointer; position: sticky; top: 0; }
 .cap-group-divider:hover { color: var(--secondary); }
 .cap-word-time { color: var(--text-3); font: 9px monospace; min-width: 32px; flex-shrink: 0; }
+/* Editable word start: looks like the old label until hovered/focused. */
+.cap-word-time-input {
+  width: 46px; background: transparent; border: 1px solid transparent;
+  border-radius: 3px; padding: 1px 2px; color: var(--text-3); font: 9px monospace;
+}
+.cap-word-time-input:hover { border-color: var(--border); }
+.cap-word-time-input:focus { border-color: var(--accent); color: var(--text); outline: none; background: var(--bg-2); }
+.cap-word-time-input::-webkit-inner-spin-button { opacity: .5; }
 .cap-word-input { flex: 1; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 11px; padding: 2px; min-width: 0; }
 .cap-word-input:focus { outline: none; background: rgba(94,92,230,.1); border-radius: 3px; }
 .cap-word-pill-btn { background: transparent; border: 1px solid transparent; cursor: pointer; font-size: 11px; padding: 2px 6px; border-radius: 3px; opacity: .4; transition: all .15s; flex-shrink: 0; }

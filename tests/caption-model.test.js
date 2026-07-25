@@ -289,3 +289,49 @@ test('char mode still works when no measure is provided (back-compat)', () => {
   assert.equal(lines.length, 2);
   assert.equal(lines[0].text, 'aaaa bbbb');
 });
+
+/* ── read-back matching (AE markers → panel words) ── */
+test('matchTimingsToWords retimes words in order, keeping duration', () => {
+  const words = [
+    { word: 'Hello', start: 0, end: 0.4 },
+    { word: 'world', start: 0.5, end: 0.9 },
+  ];
+  const caps = [{ words: [{ text: 'Hello', time: 1.0 }, { text: 'world', time: 1.6 }] }];
+  const r = M.matchTimingsToWords(words, caps);
+  assert.equal(r.matched, 2);
+  assert.equal(r.words[0].start, 1.0);
+  assert.ok(Math.abs(r.words[0].end - 1.4) < 1e-9, 'duration preserved');
+  assert.equal(r.words[1].start, 1.6);
+});
+
+test('matchTimingsToWords matches repeated words sequentially, not all at once', () => {
+  const words = [
+    { word: 'go', start: 0, end: 0.2 },
+    { word: 'go', start: 0.3, end: 0.5 },
+    { word: 'go', start: 0.6, end: 0.8 },
+  ];
+  const caps = [{ words: [{ text: 'go', time: 5 }, { text: 'go', time: 6 }, { text: 'go', time: 7 }] }];
+  const r = M.matchTimingsToWords(words, caps);
+  assert.deepEqual(r.words.map((w) => w.start), [5, 6, 7]);
+});
+
+test('matchTimingsToWords ignores punctuation/case differences', () => {
+  const words = [{ word: 'Yes.', start: 0, end: 0.3 }];
+  const r = M.matchTimingsToWords(words, [{ words: [{ text: 'YES', time: 2.5 }] }]);
+  assert.equal(r.matched, 1);
+  assert.equal(r.words[0].start, 2.5);
+});
+
+test('matchTimingsToWords leaves unmatched words untouched and reports skips', () => {
+  const words = [{ word: 'alpha', start: 0, end: 0.3 }, { word: 'beta', start: 0.4, end: 0.7 }];
+  const r = M.matchTimingsToWords(words, [{ words: [{ text: 'zzz', time: 9 }] }]);
+  assert.equal(r.matched, 0);
+  assert.equal(r.skipped, 1);
+  assert.deepEqual(r.words, words, 'no mutation of unmatched words');
+});
+
+test('matchTimingsToWords does not mutate its input', () => {
+  const words = [{ word: 'Hello', start: 0, end: 0.4 }];
+  M.matchTimingsToWords(words, [{ words: [{ text: 'Hello', time: 3 }] }]);
+  assert.equal(words[0].start, 0);
+});

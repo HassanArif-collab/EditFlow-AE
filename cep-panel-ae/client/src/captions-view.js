@@ -28,7 +28,7 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
-import { groupWords, wrapLines, wordAnim, captionTiming, EASINGS, LAYOUT } from './caption-model.js';
+import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -476,7 +476,7 @@ function _renderWordRow(w, i) {
   const text = w.word || w.text || '';
   const isPill = !!w.pill;
   return `<div class="cap-word-row ${isPill ? 'pill-active' : ''}" data-idx="${i}">
-    <span class="cap-word-time">${start.toFixed(2)}</span>
+    <input type="number" class="cap-word-time cap-word-time-input" data-idx="${i}" value="${start.toFixed(2)}" step="0.05" min="0" title="Word start (seconds) — arrows nudge by 0.05s" />
     <input type="text" class="cap-word-input" data-idx="${i}" value="${_esc(text)}" />
     <button class="cap-word-pill-btn ${isPill ? 'active' : ''}" data-idx="${i}" title="Toggle pill background">${isPill ? '💊' : '🔲'}</button>
   </div>`;
@@ -698,6 +698,7 @@ function _renderTabGenerate() {
       <button id="cap-generate-btn" class="cap-btn cap-btn-primary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🚀 Generate All (${wordCount} words)</button>
       ${S.busy ? `<button id="cap-cancel-btn" class="cap-btn cap-btn-secondary cap-btn-full">✕ Cancel</button>` : ''}
       <button id="cap-smoke-btn" class="cap-btn cap-btn-tertiary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🧪 Test First Caption (temp)</button>
+      <button id="cap-pull-timings-btn" class="cap-btn cap-btn-secondary cap-btn-full" ${S.busy ? 'disabled' : ''} title="Read word markers back from your AE captions so Generate keeps timing you dragged by hand">⬇ Pull Timings from AE</button>
       <button id="cap-srt-btn" class="cap-btn cap-btn-secondary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>💾 Export SRT</button>
       <button id="cap-clear-btn" class="cap-btn cap-btn-danger cap-btn-full" ${S.busy ? 'disabled' : ''}>🗑️ Clear Existing</button>
     </div>
@@ -857,6 +858,22 @@ function _wireTabContent(v) {
         _updatePreview();
       }
     };
+  });
+  // Word start time — keeps the word's duration, so nudging a late word
+  // doesn't stretch it. Grouping/preview refresh live; the row list is
+  // only rebuilt on blur so rows can't jump while you're typing.
+  v.querySelectorAll('.cap-word-time-input').forEach((input) => {
+    input.oninput = (e) => {
+      const idx = parseInt(e.target.dataset.idx, 10);
+      const val = parseFloat(e.target.value);
+      if (isNaN(idx) || !S.words[idx] || isNaN(val) || val < 0) return;
+      const w = S.words[idx];
+      const dur = Math.max(0.02, (w.end || 0) - (w.start || 0));
+      w.start = val;
+      w.end = val + dur;
+      _updatePreview();
+    };
+    input.onblur = () => { _refreshContentList(); _refreshSummary(); };
   });
   v.querySelectorAll('.cap-word-pill-btn').forEach((btn) => {
     btn.onclick = (e) => {
@@ -1050,6 +1067,7 @@ function _wireTabGenerate(v) {
   const c = v.querySelector('#cap-clear-btn'); if (c) c.onclick = _onClear;
   const s = v.querySelector('#cap-smoke-btn'); if (s) s.onclick = () => _onGenerate(true);
   const g = v.querySelector('#cap-generate-btn'); if (g) g.onclick = () => _onGenerate(false);
+  const pt = v.querySelector('#cap-pull-timings-btn'); if (pt) pt.onclick = _onPullTimings;
   const srt = v.querySelector('#cap-srt-btn'); if (srt) srt.onclick = _onExportSrt;
   const cancel = v.querySelector('#cap-cancel-btn'); if (cancel) cancel.onclick = () => { S._cancelGenerate = true; };
 }
@@ -1461,6 +1479,29 @@ async function _onExportSrt() {
     setTimeout(() => { S.status = null; _render(); }, 6000);
   } catch (e) {
     S.error = e.message || String(e); _render();
+  }
+}
+
+/* Pull word markers back from the AE captions. Without this, dragging a
+   marker to fix timing is lost the moment you Generate again. */
+async function _onPullTimings() {
+  if (S.busy) return;
+  try {
+    S.busy = true; S.error = null; _render();
+    const resp = await callExtendScript('ef_readCaptionTimings');
+    const caps = (resp && resp.captions) || [];
+    if (!caps.length) {
+      S.status = 'No EditFlow captions found in the comp — generate some first.';
+    } else {
+      const { words, matched, skipped } = matchTimingsToWords(S.words, caps);
+      S.words = words;
+      S.status = `Pulled ${matched} word timing${matched === 1 ? '' : 's'} from AE${skipped ? ` (${skipped} marker${skipped === 1 ? '' : 's'} didn't match your words)` : ''}.`;
+    }
+    setTimeout(() => { S.status = null; _render(); }, 6000);
+  } catch (e) {
+    S.error = e.message || String(e);
+  } finally {
+    S.busy = false; _render(); _updatePreview();
   }
 }
 

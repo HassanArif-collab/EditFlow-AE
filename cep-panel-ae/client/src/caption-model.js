@@ -240,3 +240,42 @@ export function captionTiming(groups, opts) {
     return { in: tIn, out: tOut };
   });
 }
+
+/* ── Read-back: merge AE-side manual timing into the panel's words ── */
+
+/**
+ * Map word markers pulled from AE captions back onto the panel's word list.
+ * AE is the source of truth for TIME only — text edits stay panel-side.
+ *
+ * Matching is positional-with-text-confirmation: walk the panel words once,
+ * consuming markers in order; a marker only claims a word when the text
+ * matches (case/punctuation-insensitive), so a caption whose words were
+ * edited in the panel can't silently retime the wrong word.
+ *
+ * captions: [{ words: [{ text, time }] }] (from ef_readCaptionTimings)
+ * Returns { words: newWords, matched: n, skipped: n } — pure, no mutation.
+ */
+export function matchTimingsToWords(words, captions) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const flat = [];
+  for (const cap of captions || []) for (const m of (cap.words || [])) flat.push(m);
+
+  const out = words.map((w) => ({ ...w }));
+  let wi = 0, matched = 0, skipped = 0;
+  for (const m of flat) {
+    // find the next panel word with the same text (bounded lookahead so one
+    // deleted word can't desync the whole transcript)
+    let found = -1;
+    for (let k = wi; k < Math.min(out.length, wi + 8); k++) {
+      if (norm(out[k].word || out[k].text) === norm(m.text)) { found = k; break; }
+    }
+    if (found === -1) { skipped++; continue; }
+    const w = out[found];
+    const dur = Math.max(0.02, (w.end || 0) - (w.start || 0));
+    w.start = m.time;
+    w.end = m.time + dur;
+    matched++;
+    wi = found + 1;
+  }
+  return { words: out, matched, skipped };
+}

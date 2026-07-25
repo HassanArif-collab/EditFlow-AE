@@ -1546,6 +1546,31 @@ function ef_removePreview() {
     } catch (e) { return ef_err("removePreview: " + e.toString()); }
 }
 
+/* Read manual timing edits back out of AE: for every real caption layer,
+   its in/out plus each word marker (text + dragged time). The panel maps
+   these onto its word list so the NEXT Generate keeps hand-tuned timing
+   instead of overwriting it. */
+function ef_readCaptionTimings() {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No comp");
+        var out = [];
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var L = comp.layer(i);
+            if (L.comment !== EF_TAG) continue;
+            var d = { name: String(L.name), inPoint: L.inPoint, outPoint: L.outPoint, words: [] };
+            try {
+                var mk = L.property("Marker");
+                for (var k = 1; k <= mk.numKeys; k++) {
+                    d.words.push({ text: String(mk.keyValue(k).comment), time: mk.keyTime(k) });
+                }
+            } catch (e1) {}
+            out.push(d);
+        }
+        return ef_json({ captions: out });
+    } catch (e) { return ef_err("readCaptionTimings: " + e.toString()); }
+}
+
 /* ══ Agent dev-loop tools (used via /api/ae-bridge; harmless otherwise) ══ */
 
 /* Machine-readable inventory of every layer in the comp — the agent's eyes

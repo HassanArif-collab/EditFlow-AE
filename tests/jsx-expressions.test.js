@@ -14,10 +14,21 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(JSX_PATH, 'utf8'), sandbox, { filename: 'index.jsx' });
 
-function evalExpr(expr, { time, textIndex, inPoint }) {
-  const r = vm.runInNewContext(expr, { time, textIndex, textTotal: 99, thisLayer: { inPoint } });
+/* Mock AE's layer.marker property. markerTimes=[] means "no markers" —
+   the expression must then fall back to its baked times. */
+function _markerStub(markerTimes) {
+  return { numKeys: markerTimes.length, key: (i) => ({ time: markerTimes[i - 1] }) };
+}
+
+function evalExpr(expr, { time, textIndex, inPoint, markerTimes = [] }) {
+  const r = vm.runInNewContext(expr, {
+    time, textIndex, textTotal: 99,
+    thisLayer: { inPoint, marker: _markerStub(markerTimes) },
+  });
   return Array.from(r);   // vm realm arrays fail host deepStrictEqual prototype checks
 }
+
+const evalMarkerExpr = evalExpr;   // same harness; named for marker-focused tests
 
 /* ── jsx parses + builders exist ── */
 test('index.jsx defines the single-layer engine builders', () => {
@@ -139,4 +150,20 @@ test('agent dev-loop tools exist (AE-side, exercised via bridge)', () => {
   for (const fn of ['ef_dumpLayers', 'ef_renderFrameAt', 'ef_setupTestComp']) {
     assert.equal(typeof sandbox[fn], 'function', fn);
   }
+});
+
+/* ── marker-driven timing (drag a marker, retime a word) ── */
+test('marker times override baked times (dragged marker retimes the word)', () => {
+  const expr = sandbox.ef_wordProgressExpr([0, 0.4, 0.9], 0.3, 'ease_out');
+  // word 2 baked at inPoint+0.4, but its marker was DRAGGED to 12.0
+  const a = evalMarkerExpr(expr, { time: 12.1, textIndex: 2, inPoint: 10, markerTimes: [10, 12.0, 10.9] });
+  assert.ok(a[0] > 0 && a[0] < 100, 'mid-fade at dragged time, got ' + a[0]);
+  const b = evalMarkerExpr(expr, { time: 10.5, textIndex: 2, inPoint: 10, markerTimes: [10, 12.0, 10.9] });
+  assert.deepEqual(b, [100, 100, 100], 'not started before dragged marker');
+});
+
+test('missing/short markers fall back to baked times', () => {
+  const expr = sandbox.ef_wordProgressExpr([0, 0.4, 0.9], 0.3, 'ease_out');
+  const a = evalMarkerExpr(expr, { time: 10.75, textIndex: 2, inPoint: 10, markerTimes: [] });
+  assert.deepEqual(a, [0, 0, 0], 'fully entered per baked time');
 });

@@ -927,6 +927,18 @@ function ef_probeExpressionSelector(comp) {
    Returns 100 while the word hasn't started (animator fully applied →
    opacity 0 / offset down) and eases to 0 as the word enters. Times are
    relative to layer inPoint. ES3-safe for legacy expression engines. */
+/* Shared expression prelude: resolve THIS word's start time (t0).
+   Layer markers win over the baked times, so dragging a word's marker in
+   the timeline retimes it with no expression editing. Falls back to the
+   baked time when markers are absent (or fewer than the word count).
+   Emits ES3-only tokens — AE's legacy expression engine parses these. */
+function ef_markerT0Fragment(ts) {
+    return "var ts=[" + ts.join(",") + "];" +
+        "var i=textIndex-1;if(i>=ts.length)i=ts.length-1;if(i<0)i=0;" +
+        "var t0=thisLayer.inPoint+ts[i];" +
+        "if(textIndex>=1&&thisLayer.marker.numKeys>=textIndex){t0=thisLayer.marker.key(textIndex).time;}";
+}
+
 function ef_wordProgressExpr(relTimes, dur, easing) {
     var ts = [];
     for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
@@ -935,9 +947,8 @@ function ef_wordProgressExpr(relTimes, dur, easing) {
     else if (easing === "ease_in") easeBody = "e=p*p*p;";
     else if (easing === "ease_in_out") easeBody = "e=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
     else easeBody = "e=p;";
-    return "var ts=[" + ts.join(",") + "];" +
-        "var i=textIndex-1;if(i>=ts.length)i=ts.length-1;if(i<0)i=0;" +
-        "var p=(time-thisLayer.inPoint-ts[i])/" + (dur || 0.3) + ";" +
+    return ef_markerT0Fragment(ts) +
+        "var p=(time-t0)/" + (dur || 0.3) + ";" +
         "if(p<0)p=0;if(p>1)p=1;var e;" + easeBody +
         "var a=(1-e)*100;[a,a,a];";
 }
@@ -1143,6 +1154,17 @@ function ef_buildCaptionLayer(comp, g, cfg) {
         comp.height * (cfg.posY || 85) / 100
     ]);
     var fit = ef_fitToBox(layer, comp, cfg, tIn + 0.05);
+
+    // One draggable marker per word — the selector expressions read marker
+    // times, so nudging a marker in the timeline retimes that word live.
+    // This is the fix for "the caption doesn't match the voice": no
+    // expression editing, just drag the marker.
+    try {
+        var mk = layer.property("Marker");
+        for (var mi = 0; mi < g.words.length; mi++) {
+            mk.setValueAtTime(g.words[mi].start, new MarkerValue(String(g.words[mi].text)));
+        }
+    } catch (eMk) {}
 
     var relTimes = [];
     for (var ri = 0; ri < g.words.length; ri++) {

@@ -647,11 +647,7 @@ function ef_wordFadeUpOpExpr(ws, fadeDur, easing) {
     var ws3 = Math.round(ws * 1000) / 1000;
     var d = fadeDur || 0.3;
     var e = easing || "linear";
-    var easeBody;
-    if (e === "ease_out") easeBody = "var ev=1-Math.pow(1-p,3);";
-    else if (e === "ease_in") easeBody = "var ev=p*p*p;";
-    else if (e === "ease_in_out") easeBody = "var ev=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
-    else easeBody = "var ev=p;";
+    var easeBody = "var e;" + ef_easeBody(e) + "var ev=e;";
     return "var t=time-" + ws3 + ";var p=t/" + d + ";if(p<0)p=0;if(p>1)p=1;" +
         easeBody + "ev*100;";
 }
@@ -663,11 +659,7 @@ function ef_wordFadeUpPosExpr(ws, fadeDur, slideDist, easing, centerY) {
     var s = slideDist || 40;
     var e = easing || "linear";
     var cy = Math.round(centerY * 1000) / 1000;
-    var easeBody;
-    if (e === "ease_out") easeBody = "var ev=1-Math.pow(1-p,3);";
-    else if (e === "ease_in") easeBody = "var ev=p*p*p;";
-    else if (e === "ease_in_out") easeBody = "var ev=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
-    else easeBody = "var ev=p;";
+    var easeBody = "var e;" + ef_easeBody(e) + "var ev=e;";
     return "var t=time-" + ws3 + ";var p=t/" + d + ";if(p<0)p=0;if(p>1)p=1;" +
         easeBody + "[value[0]," + cy + "+(1-ev)*" + s + "];";
 }
@@ -836,6 +828,9 @@ function ef_applyPreset(layer, cfg, g) {
         scale.expression = ef_squashExpr(intensity);
         opacity.expression = EF_REVEAL_OP;
     } else if (preset === "typewriter") {
+        // Character-rate fallback ONLY: the real per-word typewriter is
+        // ef_wordStepExpr on the single-layer engine. This path runs when
+        // the expression-selector probe fails (older AE builds).
         var full = cfg.allCaps ? g.text.toUpperCase() : g.text;
         src.expression = ef_typewriterExpr(full);
         opacity.expression = EF_REVEAL_OP;
@@ -927,6 +922,19 @@ function ef_probeExpressionSelector(comp) {
    Returns 100 while the word hasn't started (animator fully applied →
    opacity 0 / offset down) and eases to 0 as the word enters. Times are
    relative to layer inPoint. ES3-safe for legacy expression engines. */
+/* THE ease source for every generated expression. Mirrors EASINGS in
+   caption-model.js — tests/jsx-expressions.test.js samples both and fails
+   if they ever drift, which is what keeps the preview honest.
+   Sets `e` from `p` (0..1). ES3 only. */
+function ef_easeBody(easing) {
+    if (easing === "ease_out") return "e=1-Math.pow(1-p,3);";
+    if (easing === "ease_in") return "e=p*p*p;";
+    if (easing === "ease_in_out") return "e=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
+    if (easing === "expo_out") return "e=(p>=1)?1:1-Math.pow(2,-10*p);";
+    if (easing === "back_out") return "var c1=1.70158;var c3=c1+1;e=1+c3*Math.pow(p-1,3)+c1*Math.pow(p-1,2);";
+    return "e=p;";
+}
+
 /* Shared expression prelude: resolve THIS word's start time (t0).
    Layer markers win over the baked times, so dragging a word's marker in
    the timeline retimes it with no expression editing. Falls back to the
@@ -942,15 +950,56 @@ function ef_markerT0Fragment(ts) {
 function ef_wordProgressExpr(relTimes, dur, easing) {
     var ts = [];
     for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
-    var easeBody;
-    if (easing === "ease_out") easeBody = "e=1-Math.pow(1-p,3);";
-    else if (easing === "ease_in") easeBody = "e=p*p*p;";
-    else if (easing === "ease_in_out") easeBody = "e=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
-    else easeBody = "e=p;";
+    var easeBody = ef_easeBody(easing);
     return ef_markerT0Fragment(ts) +
         "var p=(time-t0)/" + (dur || 0.3) + ";" +
         "if(p<0)p=0;if(p>1)p=1;var e;" + easeBody +
         "var a=(1-e)*100;[a,a,a];";
+}
+
+/* Per-word POP-IN: damped-spring scale weight. 100 = animator fully
+   applied (scale 0), 0 = at rest. Same constants as wordAnim('popin') in
+   caption-model.js so the preview and AE agree. */
+function ef_wordScaleSpringExpr(relTimes, intensity) {
+    var ts = [];
+    for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
+    var d = 6.0, f = 3.0;
+    return ef_markerT0Fragment(ts) +
+        "var t=time-t0;" +
+        "if(t<0){[100,100,100];}else{" +
+        "var s=1-Math.exp(-" + d + "*t)*Math.cos(" + f + "*2*Math.PI*t);" +
+        "var a=(1-s)*100;if(a>100)a=100;if(a<-100)a=-100;[a,a,a];}";
+}
+
+/* Per-word BOUNCE: decaying cosine on position weight. */
+function ef_wordBounceExpr(relTimes, intensity) {
+    var ts = [];
+    for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
+    return ef_markerT0Fragment(ts) +
+        "var t=time-t0;" +
+        "if(t<0){[100,100,100];}else{" +
+        "var o=Math.exp(-6*t)*Math.cos(2*2*Math.PI*t);" +
+        "var a=o*100;if(a>100)a=100;if(a<-100)a=-100;[a,a,a];}";
+}
+
+/* Per-word TYPEWRITER: hard step, no fade — the word is simply there. */
+function ef_wordStepExpr(relTimes) {
+    var ts = [];
+    for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
+    return ef_markerT0Fragment(ts) +
+        "var a=(time<t0)?100:0;[a,a,a];";
+}
+
+/* Per-word SQUASH: asymmetric scale deviation, decaying sine. */
+function ef_wordSquashExpr(relTimes, intensity) {
+    var ts = [];
+    for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
+    var iv = intensity || 1.0;
+    return ef_markerT0Fragment(ts) +
+        "var t=time-t0;" +
+        "if(t<0){[100,100,100];}else{" +
+        "var dev=Math.abs(" + (13 * iv) + "*Math.exp(-t)*Math.sin(" + (18 * iv) + "*t));" +
+        "var a=dev*(100/13);if(a>100)a=100;[a,a,a];}";
 }
 
 function ef_addWordSelector(animator, expr) {
@@ -962,20 +1011,54 @@ function ef_addWordSelector(animator, expr) {
 
 /* fadeup_words on ONE layer: Opacity animator (0) + Position animator
    (down slideDist), each weighted per word by the same selector expression. */
+/* Helper: add one animator with a property + selector expression. */
+function ef_addWordAnimator(animators, name, matchName, value, expr) {
+    var anim = animators.addProperty("ADBE Text Animator");
+    anim.name = name;
+    var prop = anim.property("ADBE Text Animator Properties").addProperty(matchName);
+    if (value != null) {
+        try { prop.setValue(value); }
+        catch (eV) { try { prop.setValue([value[0], value[1], 0]); } catch (eV2) {} }
+    }
+    ef_addWordSelector(anim, expr);
+    return anim;
+}
+
+/* Per-word animators for EVERY word preset. Before this, only
+   fadeup_words animated per word in AE — popin/bounce/squash/typewriter
+   animated the whole caption, so the panel preview was lying about them. */
 function ef_applyWordAnimators(layer, relTimes, cfg) {
-    var expr = ef_wordProgressExpr(relTimes, cfg.fadeDur || 0.3, cfg.wordEasing || "linear");
     var animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
-    var fadeAnim = animators.addProperty("ADBE Text Animator");
-    fadeAnim.name = "EF Word Fade";
-    fadeAnim.property("ADBE Text Animator Properties").addProperty("ADBE Text Opacity").setValue(0);
-    ef_addWordSelector(fadeAnim, expr);
+    var preset = cfg.preset || "fadeup_words";
+    var intensity = cfg.animIntensity || 1.0;
     var slide = (cfg.slideDist != null) ? cfg.slideDist : 40;
-    if (slide > 0) {
-        var riseAnim = animators.addProperty("ADBE Text Animator");
-        riseAnim.name = "EF Word Rise";
-        var posProp = riseAnim.property("ADBE Text Animator Properties").addProperty("ADBE Text Position 3D");
-        try { posProp.setValue([0, slide]); } catch (e3) { posProp.setValue([0, slide, 0]); }
-        ef_addWordSelector(riseAnim, expr);
+    // Quick reveal shared by the motion presets: the word appears fast,
+    // the motion carries the eye (a slow fade under a bounce reads muddy).
+    var revealExpr = ef_wordProgressExpr(relTimes, 0.1, "linear");
+
+    if (preset === "popin") {
+        ef_addWordAnimator(animators, "EF Word Reveal", "ADBE Text Opacity", 0, revealExpr);
+        ef_addWordAnimator(animators, "EF Word Pop", "ADBE Text Scale 3D", [-100, -100],
+            ef_wordScaleSpringExpr(relTimes, intensity));
+    } else if (preset === "bounce") {
+        ef_addWordAnimator(animators, "EF Word Reveal", "ADBE Text Opacity", 0, revealExpr);
+        ef_addWordAnimator(animators, "EF Word Bounce", "ADBE Text Position 3D",
+            [0, -160 * intensity], ef_wordBounceExpr(relTimes, intensity));
+    } else if (preset === "squash") {
+        ef_addWordAnimator(animators, "EF Word Reveal", "ADBE Text Opacity", 0, revealExpr);
+        var sq = ef_wordSquashExpr(relTimes, intensity);
+        ef_addWordAnimator(animators, "EF Word Squash X", "ADBE Text Scale 3D", [-13 * intensity, 0], sq);
+        ef_addWordAnimator(animators, "EF Word Squash Y", "ADBE Text Scale 3D", [0, 13 * intensity], sq);
+    } else if (preset === "typewriter") {
+        ef_addWordAnimator(animators, "EF Word Type", "ADBE Text Opacity", 0,
+            ef_wordStepExpr(relTimes));
+    } else {
+        // fadeup_words (default): fade + rise, eased per the panel setting
+        var expr = ef_wordProgressExpr(relTimes, cfg.fadeDur || 0.3, cfg.wordEasing || "linear");
+        ef_addWordAnimator(animators, "EF Word Fade", "ADBE Text Opacity", 0, expr);
+        if (slide > 0) {
+            ef_addWordAnimator(animators, "EF Word Rise", "ADBE Text Position 3D", [0, slide], expr);
+        }
     }
 }
 
@@ -1501,7 +1584,11 @@ function ef_createCaptions(jsonStr) {
         // Pill captions ride the same layer (pill shapes from measured word
         // spans); the per-word-layer path survives only as the probe-failure
         // fallback (user decision 2026-07-18: single layer even with pills).
-        var useSelector = usingPanelGroups && cfg.preset === "fadeup_words" &&
+        // Every WORD preset rides the single-layer per-word engine now.
+        // fade/fadeup are caption-level by design (the preview agrees), so
+        // they keep the whole-caption path — no lie either way.
+        var wordPreset = (cfg.preset !== "fade" && cfg.preset !== "fadeup");
+        var useSelector = usingPanelGroups && wordPreset &&
             !cfg.forceLegacy && ef_probeExpressionSelector(comp);
 
         var created = 0, failed = 0, errors = [];

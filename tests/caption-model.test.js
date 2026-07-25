@@ -467,3 +467,41 @@ test('a right-edge box hits the action rail (like/comment buttons)', () => {
 test('unknown zone key returns no hits instead of throwing', () => {
   assert.deepEqual(SZ.boxIntersectsUnsafe('none', { x: 0, y: 0, w: 1, h: 1 }), []);
 });
+
+/* ── pro easing set ── */
+test('expo_out is fast out of the gate and lands exactly on 1', () => {
+  assert.ok(M.EASINGS.expo_out(0.35) > 0.8, String(M.EASINGS.expo_out(0.35)));
+  assert.equal(M.EASINGS.expo_out(1), 1);
+  assert.equal(M.EASINGS.expo_out(0), 0);
+});
+
+test('back_out overshoots past 1 then settles on 1', () => {
+  assert.ok(M.EASINGS.back_out(0.7) > 1, 'expected overshoot, got ' + M.EASINGS.back_out(0.7));
+  assert.ok(Math.abs(M.EASINGS.back_out(1) - 1) < 1e-9);
+});
+
+test('all easings are monotonic-ish and finite across the ramp', () => {
+  for (const [name, fn] of Object.entries(M.EASINGS)) {
+    for (let p = 0; p <= 1.0001; p += 0.05) {
+      assert.ok(Number.isFinite(fn(p)), `${name} @ ${p}`);
+    }
+  }
+});
+
+/* ── preview motion matches the AE animators ── */
+test('popin preview scale settles to 1 (matches ef_wordScaleSpringExpr)', () => {
+  const a = M.wordAnim('popin', { start: 0, intensity: 1 }, 0.6);
+  assert.ok(Math.abs(a.scaleX - 1) < 0.05, 'settled near 1, got ' + a.scaleX);
+  const early = M.wordAnim('popin', { start: 0, intensity: 1 }, -0.1);
+  assert.equal(early.opacity, 0, 'invisible before its word');
+});
+
+test('typewriter preview is a hard step (matches ef_wordStepExpr)', () => {
+  assert.equal(M.wordAnim('typewriter', { start: 1 }, 0.99).opacity, 0);
+  assert.equal(M.wordAnim('typewriter', { start: 1 }, 1.01).opacity, 1);
+});
+
+test('bounce preview settles to rest (matches ef_wordBounceExpr)', () => {
+  const a = M.wordAnim('bounce', { start: 0, intensity: 1 }, 1.2);
+  assert.ok(Math.abs(a.dy) < 2, 'settled, got dy=' + a.dy);
+});

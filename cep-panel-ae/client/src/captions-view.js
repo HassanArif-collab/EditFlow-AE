@@ -48,10 +48,12 @@ const PRESETS = [
   ['fade', 'Simple Fade'],
 ];
 const EASING_OPTIONS = [
-  ['linear', 'Linear'],
-  ['ease_in', 'Ease In'],
+  ['expo_out', 'Expo Out (snappy)'],
+  ['back_out', 'Back Out (overshoot)'],
   ['ease_out', 'Ease Out'],
   ['ease_in_out', 'Ease In-Out'],
+  ['ease_in', 'Ease In'],
+  ['linear', 'Linear'],
 ];
 const TABS = [
   { num: 1, label: 'Transcribe', icon: '<path d="M12 2v8M8 6l4-4 4 4M5 12h14M7 12v8M17 12v8"/>' },
@@ -82,7 +84,9 @@ const S = {
   fonts: [], _fontsLoaded: false, _showPaste: false, _pasteText: '',
   // New fields for tabbed UI + per-word pill animation
   activeTab: 0,
-  wordEasing: 'ease_in_out', fadeDur: 0.5, slideDist: 50,
+  // Tuned defaults: 0.5s/50px reads floaty at 30fps. Expo-out at 0.28s
+  // with a shorter rise is the "snappy but not twitchy" look editors use.
+  wordEasing: 'expo_out', fadeDur: 0.28, slideDist: 28,
   pillEasing: 'ease_in_out', pillScaleDur: 0.5,
   _presets: {}, _activePreset: '',
   // Captured AE playhead frame (shown as preview background until hidden)

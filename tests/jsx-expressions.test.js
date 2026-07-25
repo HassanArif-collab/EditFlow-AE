@@ -178,3 +178,65 @@ test('ef_clampBlockY mirrors the model: 2-line block stays inside the comp', () 
   assert.ok(y + 48 + 48 <= 1920 * 0.97 + 1e-9, `escaped bottom: ${y}`);
   assert.equal(sandbox.ef_clampBlockY(960, 1920, 1, cfg), 960, 'unconstrained passes through');
 });
+
+/* ── shared ease bodies: jsx must match the model exactly ── */
+test('ef_easeBody matches caption-model EASINGS at 21 sample points', () => {
+  const path2 = require('node:path');
+  const { loadEsm } = require('./_load-esm');
+  const M = loadEsm(path2.resolve(__dirname, '..', 'cep-panel-ae', 'client', 'src', 'caption-model.js'));
+  for (const name of ['linear', 'ease_in', 'ease_out', 'ease_in_out', 'expo_out', 'back_out']) {
+    const body = sandbox.ef_easeBody(name);
+    for (let p = 0; p <= 1.0001; p += 0.05) {
+      const e = vm.runInNewContext('var e;var p=' + p + ';' + body + 'e;', {});
+      assert.ok(Math.abs(e - M.EASINGS[name](Math.min(p, 1))) < 1e-6,
+        `${name} @ p=${p.toFixed(2)}: jsx ${e} vs model ${M.EASINGS[name](p)}`);
+    }
+  }
+});
+
+/* ── per-word presets in AE (was: preview lied, AE animated whole caption) ── */
+test('popin word scale expr settles to 0 weight and never NaNs', () => {
+  const expr = sandbox.ef_wordScaleSpringExpr([0, 0.4], 1.0);
+  for (let t = 9.9; t < 12; t += 0.05) {
+    const a = evalMarkerExpr(expr, { time: t, textIndex: 2, inPoint: 10 });
+    assert.ok(Number.isFinite(a[0]), 'finite at t=' + t.toFixed(2));
+  }
+  const settled = evalMarkerExpr(expr, { time: 11.4, textIndex: 2, inPoint: 10 });
+  assert.ok(Math.abs(settled[0]) < 2, 'settled, got ' + settled[0]);
+  const before = evalMarkerExpr(expr, { time: 10.3, textIndex: 2, inPoint: 10 });
+  assert.ok(Math.abs(before[0]) > 50, 'word 2 not started yet at 10.3, got ' + before[0]);
+});
+
+test('typewriter word expr is a hard step at the word start (no fade)', () => {
+  const expr = sandbox.ef_wordStepExpr([0, 0.4]);
+  assert.deepEqual(evalMarkerExpr(expr, { time: 10.39, textIndex: 2, inPoint: 10 }), [100, 100, 100]);
+  assert.deepEqual(evalMarkerExpr(expr, { time: 10.41, textIndex: 2, inPoint: 10 }), [0, 0, 0]);
+});
+
+test('bounce word expr decays to rest', () => {
+  const expr = sandbox.ef_wordBounceExpr([0, 0.4], 1.0);
+  const settled = evalMarkerExpr(expr, { time: 11.5, textIndex: 2, inPoint: 10 });
+  assert.ok(Math.abs(settled[0]) < 2, 'settled, got ' + settled[0]);
+  for (let t = 9.9; t < 12; t += 0.05) {
+    assert.ok(Number.isFinite(evalMarkerExpr(expr, { time: t, textIndex: 2, inPoint: 10 })[0]));
+  }
+});
+
+test('every per-word expr honours dragged markers', () => {
+  for (const expr of [sandbox.ef_wordScaleSpringExpr([0, 0.4], 1),
+                      sandbox.ef_wordStepExpr([0, 0.4]),
+                      sandbox.ef_wordBounceExpr([0, 0.4], 1)]) {
+    const notYet = evalMarkerExpr(expr, { time: 10.5, textIndex: 2, inPoint: 10, markerTimes: [10, 12.0] });
+    assert.ok(Math.abs(notYet[0]) > 50, 'marker at 12.0 must delay the word: ' + notYet[0]);
+  }
+});
+
+test('per-word exprs contain no ES5+ tokens', () => {
+  for (const expr of [sandbox.ef_wordScaleSpringExpr([0, 0.4], 1),
+                      sandbox.ef_wordStepExpr([0, 0.4]),
+                      sandbox.ef_wordBounceExpr([0, 0.4], 1)]) {
+    for (const tok of ['=>', 'let ', 'const ', '.map(']) {
+      assert.ok(!expr.includes(tok), `contains ${tok}`);
+    }
+  }
+});

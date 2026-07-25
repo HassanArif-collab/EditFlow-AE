@@ -17,6 +17,14 @@ export const EASINGS = {
   ease_in: (p) => p * p * p,
   ease_out: (p) => 1 - Math.pow(1 - p, 3),
   ease_in_out: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2),
+  // Editor-grade curves: expo_out reads "snappy" (most of the move happens
+  // immediately, then a long soft settle); back_out overshoots slightly and
+  // comes back — the tiny bounce hand-animated titles have.
+  expo_out: (p) => (p >= 1 ? 1 : 1 - Math.pow(2, -10 * p)),
+  back_out: (p) => {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+  },
 };
 
 /* Layout constants shared with the jsx (mirrored into cfg by the panel). */

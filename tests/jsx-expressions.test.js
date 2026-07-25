@@ -171,3 +171,10 @@ test('missing/short markers fall back to baked times', () => {
 test('ef_readCaptionTimings exists (read-back path for hand-tuned timing)', () => {
   assert.equal(typeof sandbox.ef_readCaptionTimings, 'function');
 });
+
+test('ef_clampBlockY mirrors the model: 2-line block stays inside the comp', () => {
+  const cfg = { fontSize: 80 };   // lineHeight 96
+  const y = sandbox.ef_clampBlockY(1824, 1920, 2, cfg);
+  assert.ok(y + 48 + 48 <= 1920 * 0.97 + 1e-9, `escaped bottom: ${y}`);
+  assert.equal(sandbox.ef_clampBlockY(960, 1920, 1, cfg), 960, 'unconstrained passes through');
+});

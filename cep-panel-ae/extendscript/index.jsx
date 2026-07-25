@@ -992,6 +992,21 @@ function ef_boxMaxWidth(comp, cfg) {
     return comp.width * pct / 100;
 }
 
+/* Mirror of clampBlockY in caption-model.js (the source of truth) — keeps
+   a 2-line caption at a low posY from clipping the comp edge. Kept as a
+   tiny ES3 copy because the jsx can't import the model. */
+function ef_clampBlockY(requestedY, compH, nLines, cfg) {
+    var lineHeight = (cfg.fontSize || 80) * 1.2;
+    var margin = 0.03;
+    var half = ((nLines - 1) / 2) * lineHeight + lineHeight / 2;
+    var lo = compH * margin + half;
+    var hi = compH * (1 - margin) - half;
+    if (hi < lo) return compH / 2;
+    if (requestedY < lo) return lo;
+    if (requestedY > hi) return hi;
+    return requestedY;
+}
+
 function ef_fitToBox(layer, comp, cfg, atTime) {
     try {
         var r = layer.sourceRectAtTime(atTime, false);
@@ -1151,7 +1166,7 @@ function ef_buildCaptionLayer(comp, g, cfg) {
     layer.property("Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2]);
     layer.property("Position").setValue([
         comp.width * (cfg.posX || 50) / 100,
-        comp.height * (cfg.posY || 85) / 100
+        ef_clampBlockY(comp.height * (cfg.posY || 85) / 100, comp.height, lines.length, cfg)
     ]);
     var fit = ef_fitToBox(layer, comp, cfg, tIn + 0.05);
 

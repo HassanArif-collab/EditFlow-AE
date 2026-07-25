@@ -107,7 +107,67 @@ export function groupWords(words, opts) {
     }
   }
   if (cur.length) groups.push(_toGroup(cur));
-  return groups;
+  return opts.mergeOrphans ? _mergeOrphans(groups, opts) : groups;
+}
+
+/* A single short word alone on screen ("Yes.") reads as a mistake and, at
+   large font sizes, renders comically big next to its neighbours. Merge it
+   backwards when it's genuinely adjacent — never across a real pause, and
+   never past the caption box. */
+function _mergeOrphans(groups, opts) {
+  const maxGap = opts.maxGap != null ? opts.maxGap : 0.4;
+  const maxWords = Math.max(1, opts.maxWordsPerSegment || 4);
+  const widthMode = typeof opts.measure === 'function' && opts.maxWidthPx > 0;
+  const maxLines = Math.max(1, opts.maxLinesPerSegment || 1);
+  const spacePx = opts.spacePx || 0;
+  const charBudget = (opts.maxCharsPerSegment || 30) * maxLines;
+
+  const fitsMerged = (words) => {
+    if (widthMode) {
+      // greedy re-wrap of the merged word list; must still fit maxLines
+      let lines = 1, width = 0;
+      for (const w of words) {
+        const wpx = opts.measure(w.text);
+        const withWord = width === 0 ? wpx : width + spacePx + wpx;
+        if (withWord <= opts.maxWidthPx) { width = withWord; continue; }
+        if (lines < maxLines) { lines += 1; width = wpx; continue; }
+        return false;
+      }
+      return true;
+    }
+    return words.reduce((a, w) => a + w.text.length + 1, -1) <= charBudget;
+  };
+
+  const out = [];
+  for (const g of groups) {
+    const prev = out[out.length - 1];
+    const isOrphan = g.words.length === 1 && (g.end - g.start) < 0.6;
+    if (prev && isOrphan) {
+      const gap = g.start - prev.end;
+      const merged = prev.words.concat(g.words);
+      if (gap <= maxGap && merged.length <= maxWords && fitsMerged(merged)) {
+        out[out.length - 1] = _toGroup(merged);
+        continue;
+      }
+    }
+    out.push(g);
+  }
+  return out;
+}
+
+/* ── Vertical placement ────────────────────────────────────── */
+
+/**
+ * Clamp a caption block's centre Y so no line lands outside the comp.
+ * Without this, 2-line captions at a low posY (or a big font) clip the
+ * bottom edge. Returns the safe centre Y in comp pixels.
+ */
+export function clampBlockY({ requestedY, compH, nLines, lineHeight, marginPct = 0.03 }) {
+  const half = ((nLines - 1) / 2) * lineHeight + lineHeight / 2;
+  const lo = compH * marginPct + half;
+  const hi = compH * (1 - marginPct) - half;
+  if (hi < lo) return compH / 2;          // block taller than the comp
+  return Math.min(hi, Math.max(lo, requestedY));
 }
 
 function _toGroup(seg) {

@@ -28,7 +28,7 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
-import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, EASINGS, LAYOUT } from './caption-model.js';
+import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, clampBlockY, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -72,7 +72,7 @@ const S = {
   pillColor: [0.04, 0.1, 0.18], pillOpacity: 85, pillStrokeColor: [0.36, 0.55, 0.94], pillStrokeWidth: 2, pillRadius: 0.5,
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
-  boxWidthPct: 90, alignEngine: 'auto', customVocab: '',
+  boxWidthPct: 90, alignEngine: 'auto', customVocab: '', mergeOrphans: true,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
@@ -98,7 +98,7 @@ const SETTINGS_KEYS = [
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
-  'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab',
+  'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab', 'mergeOrphans',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -431,6 +431,10 @@ function _renderTabContent() {
         <label class="cap-label" title="Captions wrap and shrink to stay inside this % of the composition width">Caption Box</label>
         <input type="range" class="cap-range" id="cap-box-width" min="60" max="100" value="${S.boxWidthPct}" />
         <span class="cap-range-val" id="cap-box-width-val">${S.boxWidthPct}%</span>
+      </div>
+      <div class="cap-row">
+        <label class="cap-label" title="Pull a lone short word (like &quot;Yes.&quot;) into the sentence before it, instead of leaving it alone on screen">Merge Tiny</label>
+        <input type="checkbox" id="cap-merge-orphans" ${S.mergeOrphans !== false ? 'checked' : ''} />
       </div>
     </div>
   </div>`;
@@ -901,6 +905,11 @@ function _wireTabContent(v) {
     _refreshContentList();
     return String(S.maxLinesPerSegment);
   });
+  const mo = v.querySelector('#cap-merge-orphans');
+  if (mo) mo.onchange = (e) => {
+    S.mergeOrphans = e.target.checked;
+    _refreshContentList(); _updatePreview();
+  };
   _wireRange(v, '#cap-box-width', (val) => {
     S.boxWidthPct = parseInt(val, 10);
     _refreshContentList();
@@ -1677,7 +1686,12 @@ function _drawCaption(ctx, w, h, g, t) {
   const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
   const space = S.fontSize * LAYOUT.wordGapEm * px;
   const cx = w * (S.posX / 100);
-  const blockCy = h * (S.posY / 100);
+  // Clamped so a 2-line caption at a low posY can't clip the comp edge
+  // (same rule mirrored in the jsx — see ef_buildCaptionLayer).
+  const blockCy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: lines.length, lineHeight, marginPct: 0.03,
+  });
 
   // Measure + position every word, line by line.
   const layout = [];
@@ -1880,6 +1894,7 @@ function _groupWordsForPreview(words) {
     maxWordsPerSegment: S.maxWordsPerSegment,
     maxDurationPerSegment: S.maxDurationPerSegment,
     maxGap: 0.4,
+    mergeOrphans: S.mergeOrphans !== false,
   });
 }
 

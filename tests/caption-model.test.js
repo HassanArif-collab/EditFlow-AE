@@ -376,3 +376,59 @@ test('char mode unchanged when no measure provided (back-compat)', () => {
   const words = [{ word: 'a', start: 0, end: 1 }, { word: 'b', start: 1, end: 2 }];
   assert.equal(M.groupWords(words, { maxWordsPerSegment: 4 }).length, 1);
 });
+
+/* ── vertical clamp: captions never clip the comp edge ── */
+test('clampBlockY keeps a 2-line block inside the bottom margin', () => {
+  const y = M.clampBlockY({ requestedY: 1824, compH: 1920, nLines: 2, lineHeight: 96, marginPct: 0.03 });
+  assert.ok(y + ((2 - 1) / 2) * 96 + 96 / 2 <= 1920 * 0.97 + 1e-9, `block bottom escaped: y=${y}`);
+});
+
+test('clampBlockY passes an unconstrained request through untouched', () => {
+  assert.equal(M.clampBlockY({ requestedY: 960, compH: 1920, nLines: 1, lineHeight: 96, marginPct: 0.03 }), 960);
+});
+
+test('clampBlockY also guards the top edge', () => {
+  const y = M.clampBlockY({ requestedY: 10, compH: 1920, nLines: 2, lineHeight: 96, marginPct: 0.03 });
+  assert.ok(y - ((2 - 1) / 2) * 96 - 96 / 2 >= 1920 * 0.03 - 1e-9, `block top escaped: y=${y}`);
+});
+
+/* ── orphan merge: the lonely "Yes." rule ── */
+test('a 1-word, short, adjacent caption merges into its neighbour', () => {
+  const words = [
+    { word: 'Great', start: 0, end: 0.4 }, { word: 'work.', start: 0.45, end: 0.8 },
+    { word: 'Yes.', start: 1.0, end: 1.3 },
+    { word: 'Moving', start: 2.6, end: 3.0 }, { word: 'on.', start: 3.05, end: 3.4 },
+  ];
+  const groups = M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4, mergeOrphans: true });
+  assert.equal(groups.length, 2, groups.map((g) => g.text).join(' | '));
+  assert.match(groups[0].text, /Yes\.$/);
+});
+
+test('orphans stay separate across a real pause', () => {
+  const words = [
+    { word: 'Hello', start: 0, end: 0.4 },
+    { word: 'Yes.', start: 3.0, end: 3.3 },
+  ];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4, mergeOrphans: true }).length, 2);
+});
+
+test('orphan merge never exceeds the measured box', () => {
+  const words = [
+    { word: 'aaaaa', start: 0, end: 0.3 }, { word: 'bbbbb', start: 0.35, end: 0.6 },
+    { word: 'cc.', start: 0.65, end: 0.9 },
+  ];
+  const opts = { maxWordsPerSegment: 2, maxGap: 9, mergeOrphans: true, maxLinesPerSegment: 1,
+    maxWidthPx: 100, measure: (t) => t.length * 10, spacePx: 0 };
+  for (const g of M.groupWords(words, opts)) {
+    const w = g.words.reduce((a, x) => a + x.text.length * 10, 0);
+    assert.ok(w <= 100, `merged group ${g.text} = ${w}px exceeds box`);
+  }
+});
+
+test('mergeOrphans off by default leaves the orphan alone', () => {
+  const words = [
+    { word: 'Great', start: 0, end: 0.4 }, { word: 'work.', start: 0.45, end: 0.8 },
+    { word: 'Yes.', start: 1.0, end: 1.3 },
+  ];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4 }).length, 2);
+});

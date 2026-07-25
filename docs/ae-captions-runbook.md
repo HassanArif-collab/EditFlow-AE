@@ -68,3 +68,49 @@ For any failure: step number, AE version, what you saw, the panel's 📋 Log
 output, and (if generation ran) the generate result line from the Generate
 tab. With the backend running with `EDITFLOW_AGENT_BRIDGE=1`, an agent can
 gather all of this itself — see `docs/ae-agent-workflow.md`.
+
+---
+
+## Pro-polish additions (2026-07-23)
+
+11. **Retime a word by dragging** — generate captions, select a caption
+    layer, and look at the timeline: there's one **marker per word**.
+    Drag a marker left/right.
+    - **Expect:** that word's animation moves with the marker on the next
+      preview pass. No expression editing.
+    - **If nothing moves:** report whether the markers exist at all
+      (they're added in `ef_buildCaptionLayer`).
+    - **Known limit:** don't drag a word *past* its neighbour — AE
+      re-sorts markers by time, which swaps the two words' timings.
+      Retime the neighbour too.
+
+12. **Keep your hand-tuned timing** — after dragging markers, click
+    **⬇ Pull Timings from AE** (Generate tab), then Generate again.
+    - **Expect:** the status says "Pulled N word timings"; the new
+      captions keep the timing you dragged.
+    - **If it says 0:** the marker text no longer matches the panel's
+      words (an edit); report both.
+
+13. **Caption box** — click 🔲 above the preview. Drag inside the dashed
+    box to move it; drag a side handle to resize.
+    - **Expect:** captions re-wrap live; Generate places them in the same
+      spot in AE. A caption never renders outside the comp.
+
+14. **Platform frame check** (portrait comps) — pick TikTok / Reels /
+    Shorts next to 🔲.
+    - **Expect:** the app's chrome is drawn over your frame; if your
+      caption box overlaps it, the box turns amber and a line names what
+      covers it ("like · comment · share").
+    - Compare against a real upload once — report any zone that's off.
+
+15. **Font size no longer changes caption size** — drag Font Size to
+    140+.
+    - **Expect:** captions hold **fewer words each** but every caption
+      renders at the SAME glyph size. Nothing shrinks.
+
+16. **Preset sweep, per-word** — popin, bounce, squash and typewriter
+    should now animate **word by word** in AE (not the whole caption at
+    once), matching the panel preview.
+    - **If a preset animates all at once:** the expression-selector probe
+      failed — report the generate result line (`wordSelector: false`)
+      and your AE version.

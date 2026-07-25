@@ -28,7 +28,8 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
-import { groupWords, wrapLines, wordAnim, captionTiming, EASINGS, LAYOUT } from './caption-model.js';
+import { SAFE_ZONES, boxIntersectsUnsafe, drawSafeZones } from './safe-zones.js';
+import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, clampBlockY, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -47,10 +48,12 @@ const PRESETS = [
   ['fade', 'Simple Fade'],
 ];
 const EASING_OPTIONS = [
-  ['linear', 'Linear'],
-  ['ease_in', 'Ease In'],
+  ['expo_out', 'Expo Out (snappy)'],
+  ['back_out', 'Back Out (overshoot)'],
   ['ease_out', 'Ease Out'],
   ['ease_in_out', 'Ease In-Out'],
+  ['ease_in', 'Ease In'],
+  ['linear', 'Linear'],
 ];
 const TABS = [
   { num: 1, label: 'Transcribe', icon: '<path d="M12 2v8M8 6l4-4 4 4M5 12h14M7 12v8M17 12v8"/>' },
@@ -72,7 +75,8 @@ const S = {
   pillColor: [0.04, 0.1, 0.18], pillOpacity: 85, pillStrokeColor: [0.36, 0.55, 0.94], pillStrokeWidth: 2, pillRadius: 0.5,
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
-  boxWidthPct: 90, alignEngine: 'auto', customVocab: '',
+  boxWidthPct: 90, alignEngine: 'auto', customVocab: '', mergeOrphans: true,
+  safeZone: 'none', _showBox: false,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
@@ -80,7 +84,9 @@ const S = {
   fonts: [], _fontsLoaded: false, _showPaste: false, _pasteText: '',
   // New fields for tabbed UI + per-word pill animation
   activeTab: 0,
-  wordEasing: 'ease_in_out', fadeDur: 0.5, slideDist: 50,
+  // Tuned defaults: 0.5s/50px reads floaty at 30fps. Expo-out at 0.28s
+  // with a shorter rise is the "snappy but not twitchy" look editors use.
+  wordEasing: 'expo_out', fadeDur: 0.28, slideDist: 28,
   pillEasing: 'ease_in_out', pillScaleDur: 0.5,
   _presets: {}, _activePreset: '',
   // Captured AE playhead frame (shown as preview background until hidden)
@@ -98,7 +104,8 @@ const SETTINGS_KEYS = [
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
-  'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab',
+  'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab', 'mergeOrphans',
+  'safeZone',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -300,14 +307,28 @@ function _renderPreview() {
       <button id="cap-preview-play" class="cap-play-btn" ${dis}>${S._previewPlaying ? '⏸' : '▶'}</button>
       <input type="range" id="cap-preview-seek" class="cap-range" min="0" max="${dur}" step="0.01" value="${t}" ${dis} />
       <span class="cap-preview-time" id="cap-preview-time">${t.toFixed(1)}s / ${dur.toFixed(1)}s</span>
+      <button id="cap-box-toggle" class="cap-icon-btn ${S._showBox ? 'active' : ''}" title="Show the caption box — drag it to move, drag its side handles to resize">🔲</button>
+      ${ch > cw ? `<select id="cap-safe-zone" class="cap-select" style="width:auto;padding:2px 4px;font-size:10px;" title="Show where each app's buttons cover your video">
+        <option value="none" ${!S.safeZone || S.safeZone === 'none' ? 'selected' : ''}>No overlay</option>
+        ${Object.entries(SAFE_ZONES).map(([k, z]) => `<option value="${k}" ${S.safeZone === k ? 'selected' : ''}>${z.label}</option>`).join('')}
+      </select>` : ''}
       ${!window.__adobe_cep__ ? `<select id="cap-dev-aspect" class="cap-select" style="width:auto;padding:2px 4px;font-size:10px;" title="No AE detected — pick the comp aspect to preview">
         <option value="1920x1080" ${cw === 1920 ? 'selected' : ''}>16:9</option>
         <option value="1080x1920" ${cw === 1080 && ch === 1920 ? 'selected' : ''}>9:16</option>
         <option value="1080x1080" ${cw === 1080 && ch === 1080 ? 'selected' : ''}>1:1</option>
       </select>` : ''}
     </div>
+    ${_safeZoneWarningHTML()}
     <div class="cap-preview-resize-bar" title="Drag to resize preview"><div></div></div>
   </div>`;
+}
+
+/* One-line warning when the caption box sits under platform chrome. */
+function _safeZoneWarningHTML() {
+  const hits = _boxUnsafeHits();
+  if (!hits.length) return '';
+  const zone = SAFE_ZONES[S.safeZone];
+  return `<div class="cap-safezone-warn">⚠ On ${_esc(zone ? zone.label : S.safeZone)}, your captions sit under: ${_esc(hits.map((r) => r.tag).join(', '))} — drag the box up or narrower.</div>`;
 }
 
 function _renderTabBar() {
@@ -432,6 +453,10 @@ function _renderTabContent() {
         <input type="range" class="cap-range" id="cap-box-width" min="60" max="100" value="${S.boxWidthPct}" />
         <span class="cap-range-val" id="cap-box-width-val">${S.boxWidthPct}%</span>
       </div>
+      <div class="cap-row">
+        <label class="cap-label" title="Pull a lone short word (like &quot;Yes.&quot;) into the sentence before it, instead of leaving it alone on screen">Merge Tiny</label>
+        <input type="checkbox" id="cap-merge-orphans" ${S.mergeOrphans !== false ? 'checked' : ''} />
+      </div>
     </div>
   </div>`;
 }
@@ -476,7 +501,7 @@ function _renderWordRow(w, i) {
   const text = w.word || w.text || '';
   const isPill = !!w.pill;
   return `<div class="cap-word-row ${isPill ? 'pill-active' : ''}" data-idx="${i}">
-    <span class="cap-word-time">${start.toFixed(2)}</span>
+    <input type="number" class="cap-word-time cap-word-time-input" data-idx="${i}" value="${start.toFixed(2)}" step="0.05" min="0" title="Word start (seconds) — arrows nudge by 0.05s" />
     <input type="text" class="cap-word-input" data-idx="${i}" value="${_esc(text)}" />
     <button class="cap-word-pill-btn ${isPill ? 'active' : ''}" data-idx="${i}" title="Toggle pill background">${isPill ? '💊' : '🔲'}</button>
   </div>`;
@@ -698,6 +723,7 @@ function _renderTabGenerate() {
       <button id="cap-generate-btn" class="cap-btn cap-btn-primary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🚀 Generate All (${wordCount} words)</button>
       ${S.busy ? `<button id="cap-cancel-btn" class="cap-btn cap-btn-secondary cap-btn-full">✕ Cancel</button>` : ''}
       <button id="cap-smoke-btn" class="cap-btn cap-btn-tertiary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🧪 Test First Caption (temp)</button>
+      <button id="cap-pull-timings-btn" class="cap-btn cap-btn-secondary cap-btn-full" ${S.busy ? 'disabled' : ''} title="Read word markers back from your AE captions so Generate keeps timing you dragged by hand">⬇ Pull Timings from AE</button>
       <button id="cap-srt-btn" class="cap-btn cap-btn-secondary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>💾 Export SRT</button>
       <button id="cap-clear-btn" class="cap-btn cap-btn-danger cap-btn-full" ${S.busy ? 'disabled' : ''}>🗑️ Clear Existing</button>
     </div>
@@ -792,6 +818,72 @@ function _wirePreview(v) {
     S.compInfo = { width: w2, height: h2, frameRate: 30, name: 'browser-dev', duration: S.duration || 10 };
     _render();
   };
+  const boxToggle = v.querySelector('#cap-box-toggle');
+  if (boxToggle) boxToggle.onclick = () => {
+    S._showBox = !S._showBox;
+    boxToggle.classList.toggle('active', S._showBox);
+    _updatePreview();
+  };
+  const szSel = v.querySelector('#cap-safe-zone');
+  if (szSel) szSel.onchange = (e) => {
+    S.safeZone = e.target.value;
+    S._showBox = S._showBox || S.safeZone !== 'none';   // box is the point of the check
+    _render();
+  };
+
+  // Drag the caption box directly on the canvas: side handles resize,
+  // anywhere inside moves it. Beats guessing with three % sliders.
+  const canvas = v.querySelector('#cap-preview-canvas');
+  if (canvas) {
+    let mode = null;
+    const canvasPos = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - r.left) * (canvas.width / r.width),
+        y: (e.clientY - r.top) * (canvas.height / r.height),
+      };
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!S._showBox) return;
+      const p = canvasPos(e);
+      mode = _boxHit(p.x, p.y, canvas.width, canvas.height);
+      if (!mode) return;
+      e.preventDefault(); e.stopPropagation();
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!S._showBox) return;
+      const p = canvasPos(e);
+      if (!mode) {
+        const hit = _boxHit(p.x, p.y, canvas.width, canvas.height);
+        canvas.style.cursor = hit === 'move' ? 'move' : (hit ? 'ew-resize' : '');
+        return;
+      }
+      const cx = canvas.width * (S.posX / 100);
+      if (mode === 'left' || mode === 'right') {
+        const halfPct = Math.abs(p.x - cx) / canvas.width * 100;
+        S.boxWidthPct = Math.max(60, Math.min(100, Math.round(halfPct * 2)));
+        const lbl = document.getElementById('cap-box-width-val');
+        if (lbl) lbl.textContent = S.boxWidthPct + '%';
+        const rng = document.getElementById('cap-box-width');
+        if (rng) rng.value = S.boxWidthPct;
+      } else {
+        S.posX = Math.max(5, Math.min(95, Math.round(p.x / canvas.width * 100)));
+        S.posY = Math.max(5, Math.min(95, Math.round(p.y / canvas.height * 100)));
+      }
+      _updatePreview();
+    });
+    const endDrag = (e) => {
+      if (!mode) return;
+      mode = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+      _refreshContentList();   // grouping depends on box width
+      _render();
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  }
+
   // Resize drag — start from any point inside the preview section
   const sec = v.querySelector('.cap-preview-section');
   const hideFrame = v.querySelector('#cap-frame-hide');
@@ -858,6 +950,22 @@ function _wireTabContent(v) {
       }
     };
   });
+  // Word start time — keeps the word's duration, so nudging a late word
+  // doesn't stretch it. Grouping/preview refresh live; the row list is
+  // only rebuilt on blur so rows can't jump while you're typing.
+  v.querySelectorAll('.cap-word-time-input').forEach((input) => {
+    input.oninput = (e) => {
+      const idx = parseInt(e.target.dataset.idx, 10);
+      const val = parseFloat(e.target.value);
+      if (isNaN(idx) || !S.words[idx] || isNaN(val) || val < 0) return;
+      const w = S.words[idx];
+      const dur = Math.max(0.02, (w.end || 0) - (w.start || 0));
+      w.start = val;
+      w.end = val + dur;
+      _updatePreview();
+    };
+    input.onblur = () => { _refreshContentList(); _refreshSummary(); };
+  });
   v.querySelectorAll('.cap-word-pill-btn').forEach((btn) => {
     btn.onclick = (e) => {
       const idx = parseInt(e.currentTarget.dataset.idx, 10);
@@ -884,6 +992,11 @@ function _wireTabContent(v) {
     _refreshContentList();
     return String(S.maxLinesPerSegment);
   });
+  const mo = v.querySelector('#cap-merge-orphans');
+  if (mo) mo.onchange = (e) => {
+    S.mergeOrphans = e.target.checked;
+    _refreshContentList(); _updatePreview();
+  };
   _wireRange(v, '#cap-box-width', (val) => {
     S.boxWidthPct = parseInt(val, 10);
     _refreshContentList();
@@ -1000,7 +1113,13 @@ function _wireTabStyle(v) {
   const fontInput = v.querySelector('#cap-font-ps');
   if (fontInput) fontInput.onchange = (e) => { S.fontPS = e.target.value || 'Arial-BoldMT'; _updatePreview(); };
 
-  _wireRange(v, '#cap-font-size', (val) => { S.fontSize = parseInt(val, 10); return S.fontSize + 'px'; });
+  // Font size now decides words-per-caption (width-aware grouping), so the
+  // caption list must rebuild too — not just the canvas.
+  _wireRange(v, '#cap-font-size', (val) => {
+    S.fontSize = parseInt(val, 10);
+    _refreshContentList();
+    return S.fontSize + 'px';
+  });
   _wireColor(v, '#cap-fill-color', (c) => { S.fillColor = c; });
   _wireColor(v, '#cap-stroke-color', (c) => { S.strokeColor = c; });
   _wireRange(v, '#cap-stroke-width', (val) => { S.strokeWidth = parseInt(val, 10); return S.strokeWidth + 'px'; });
@@ -1050,6 +1169,7 @@ function _wireTabGenerate(v) {
   const c = v.querySelector('#cap-clear-btn'); if (c) c.onclick = _onClear;
   const s = v.querySelector('#cap-smoke-btn'); if (s) s.onclick = () => _onGenerate(true);
   const g = v.querySelector('#cap-generate-btn'); if (g) g.onclick = () => _onGenerate(false);
+  const pt = v.querySelector('#cap-pull-timings-btn'); if (pt) pt.onclick = _onPullTimings;
   const srt = v.querySelector('#cap-srt-btn'); if (srt) srt.onclick = _onExportSrt;
   const cancel = v.querySelector('#cap-cancel-btn'); if (cancel) cancel.onclick = () => { S._cancelGenerate = true; };
 }
@@ -1464,6 +1584,29 @@ async function _onExportSrt() {
   }
 }
 
+/* Pull word markers back from the AE captions. Without this, dragging a
+   marker to fix timing is lost the moment you Generate again. */
+async function _onPullTimings() {
+  if (S.busy) return;
+  try {
+    S.busy = true; S.error = null; _render();
+    const resp = await callExtendScript('ef_readCaptionTimings');
+    const caps = (resp && resp.captions) || [];
+    if (!caps.length) {
+      S.status = 'No EditFlow captions found in the comp — generate some first.';
+    } else {
+      const { words, matched, skipped } = matchTimingsToWords(S.words, caps);
+      S.words = words;
+      S.status = `Pulled ${matched} word timing${matched === 1 ? '' : 's'} from AE${skipped ? ` (${skipped} marker${skipped === 1 ? '' : 's'} didn't match your words)` : ''}.`;
+    }
+    setTimeout(() => { S.status = null; _render(); }, 6000);
+  } catch (e) {
+    S.error = e.message || String(e);
+  } finally {
+    S.busy = false; _render(); _updatePreview();
+  }
+}
+
 async function _onClear() {
   try {
     S.busy = true; _render();
@@ -1620,6 +1763,9 @@ function _updatePreview() {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`(no caption at ${t.toFixed(2)}s)`, w / 2, h / 2);
   }
+  // Overlays last so they sit above the captions they describe.
+  if (S.safeZone && S.safeZone !== 'none') drawSafeZones(ctx, w, h, S.safeZone);
+  if (S._showBox) _drawBoxOverlay(ctx, w, h);
 }
 
 /* Draw one caption group at time t. Every pixel value scales by ONE factor
@@ -1636,7 +1782,12 @@ function _drawCaption(ctx, w, h, g, t) {
   const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
   const space = S.fontSize * LAYOUT.wordGapEm * px;
   const cx = w * (S.posX / 100);
-  const blockCy = h * (S.posY / 100);
+  // Clamped so a 2-line caption at a low posY can't clip the comp edge
+  // (same rule mirrored in the jsx — see ef_buildCaptionLayer).
+  const blockCy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: lines.length, lineHeight, marginPct: 0.03,
+  });
 
   // Measure + position every word, line by line.
   const layout = [];
@@ -1776,15 +1927,84 @@ function _measureCompPx(text) {
 /* Wrap a group's words into lines that fit the caption box (boxWidthPct of
    comp width) using measured widths. This is what keeps the font size
    CONSTANT: long captions wrap instead of shrinking. */
-function _wrapForBox(g) {
+/* THE shared box options. Grouping and wrapping must use identical values
+   or a caption can be grouped to fit and then wrap to a third line. */
+function _boxOpts() {
   const compW = (S.compInfo && S.compInfo.width) || 1920;
-  return wrapLines(g, {
+  return {
     maxLinesPerSegment: S.maxLinesPerSegment,
     maxCharsPerSegment: S.maxCharsPerSegment,
     maxWidthPx: compW * (S.boxWidthPct / 100),
     measure: _measureCompPx,
     spacePx: S.fontSize * LAYOUT.wordGapEm,
+  };
+}
+
+function _wrapForBox(g) {
+  return wrapLines(g, _boxOpts());
+}
+
+/* The caption box as comp FRACTIONS — what the safe-zone check needs. */
+function _boxFractions() {
+  const compH = (S.compInfo && S.compInfo.height) || 1080;
+  const lineHeightFrac = (S.fontSize * LAYOUT.lineHeightEm) / compH;
+  const hFrac = Math.max(lineHeightFrac, S.maxLinesPerSegment * lineHeightFrac);
+  const wFrac = S.boxWidthPct / 100;
+  return {
+    x: S.posX / 100 - wFrac / 2,
+    y: S.posY / 100 - hFrac / 2,
+    w: wFrac, h: hFrac,
+  };
+}
+
+function _boxUnsafeHits() {
+  if (!S.safeZone || S.safeZone === 'none') return [];
+  return boxIntersectsUnsafe(S.safeZone, _boxFractions());
+}
+
+/* The caption box, drawn over the preview: a dashed rect with two side
+   handles. Seeing and dragging the box is the whole point — the % slider
+   never told anyone where their captions would actually sit. */
+function _drawBoxOverlay(ctx, w, h) {
+  const px = w / ((S.compInfo && S.compInfo.width) || 1920);
+  const bw = w * (S.boxWidthPct / 100);
+  const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
+  const bh = Math.max(lineHeight, S.maxLinesPerSegment * lineHeight);
+  const cx = w * (S.posX / 100);
+  const cy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: S.maxLinesPerSegment, lineHeight, marginPct: 0.03,
   });
+  const warn = _boxUnsafeHits().length > 0;
+  ctx.save();
+  ctx.strokeStyle = warn ? 'rgba(245,158,11,.95)' : 'rgba(91,141,239,.9)';
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - bw / 2, cy - bh / 2, bw, bh);
+  ctx.setLineDash([]);
+  ctx.fillStyle = warn ? '#f59e0b' : '#5b8def';
+  for (const hx of [cx - bw / 2, cx + bw / 2]) ctx.fillRect(hx - 3, cy - 11, 6, 22);
+  ctx.restore();
+}
+
+/* Hit-test in canvas pixels: 'left' | 'right' | 'move' | null. */
+function _boxHit(x, y, w, h) {
+  const px = w / ((S.compInfo && S.compInfo.width) || 1920);
+  const bw = w * (S.boxWidthPct / 100);
+  const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
+  const bh = Math.max(lineHeight, S.maxLinesPerSegment * lineHeight);
+  const cx = w * (S.posX / 100);
+  const cy = clampBlockY({
+    requestedY: h * (S.posY / 100),
+    compH: h, nLines: S.maxLinesPerSegment, lineHeight, marginPct: 0.03,
+  });
+  const near = 8;
+  if (Math.abs(y - cy) <= bh / 2 + near) {
+    if (Math.abs(x - (cx - bw / 2)) <= near) return 'left';
+    if (Math.abs(x - (cx + bw / 2)) <= near) return 'right';
+  }
+  if (x > cx - bw / 2 && x < cx + bw / 2 && Math.abs(y - cy) <= bh / 2) return 'move';
+  return null;
 }
 
 function _pillScale(pillStart, t) {
@@ -1825,13 +2045,15 @@ function _roundRect(ctx, x, y, w, h, r) {
 }
 
 function _groupWordsForPreview(words) {
-  // Single source of truth shared with tests + (Phase 3) the jsx config.
+  // Single source of truth shared with tests + the jsx config. Grouping
+  // takes the SAME box options as wrapping (_boxOpts), so words-per-caption
+  // adapts to the measured font size and the rendered size never changes.
   return groupWords(words, {
+    ..._boxOpts(),
     maxWordsPerSegment: S.maxWordsPerSegment,
-    maxCharsPerSegment: S.maxCharsPerSegment,
     maxDurationPerSegment: S.maxDurationPerSegment,
-    maxLinesPerSegment: S.maxLinesPerSegment,
     maxGap: 0.4,
+    mergeOrphans: S.mergeOrphans !== false,
   });
 }
 

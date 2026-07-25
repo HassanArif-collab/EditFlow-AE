@@ -17,6 +17,14 @@ export const EASINGS = {
   ease_in: (p) => p * p * p,
   ease_out: (p) => 1 - Math.pow(1 - p, 3),
   ease_in_out: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2),
+  // Editor-grade curves: expo_out reads "snappy" (most of the move happens
+  // immediately, then a long soft settle); back_out overshoots slightly and
+  // comes back — the tiny bounce hand-animated titles have.
+  expo_out: (p) => (p >= 1 ? 1 : 1 - Math.pow(2, -10 * p)),
+  back_out: (p) => {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+  },
 };
 
 /* Layout constants shared with the jsx (mirrored into cfg by the panel). */
@@ -45,6 +53,25 @@ export function groupWords(words, opts) {
   const maxGap = opts.maxGap != null ? opts.maxGap : 0.4;
   const charBudget = maxChars * maxLines;
 
+  // Width mode: decide capacity from MEASURED pixels against the caption
+  // box instead of letter count. This is what keeps the rendered font size
+  // constant — a bigger font means fewer words per caption, never a
+  // shrunk caption. Falls back to the char budget when no measurer is
+  // supplied (Node tests, callers without a canvas).
+  const widthMode = typeof opts.measure === 'function' && opts.maxWidthPx > 0;
+  const spacePx = opts.spacePx || 0;
+  let lineCount = 1, lineWidth = 0;
+  const resetFit = () => { lineCount = 1; lineWidth = 0; };
+  /* Does `text` still fit the box within maxLines? Mirrors wrapLines'
+     greedy fill, advanced one word at a time as the group grows. */
+  const fitsInBox = (text) => {
+    const wpx = opts.measure(text);
+    const withWord = lineWidth === 0 ? wpx : lineWidth + spacePx + wpx;
+    if (withWord <= opts.maxWidthPx) { lineWidth = withWord; return true; }
+    if (lineCount < maxLines) { lineCount += 1; lineWidth = wpx; return true; }
+    return false;
+  };
+
   const groups = [];
   let cur = [];
   for (let i = 0; i < (words || []).length; i++) {
@@ -58,7 +85,11 @@ export function groupWords(words, opts) {
       idx: w.idx != null ? w.idx : i,
       pill: !!w.pill,
     };
-    if (cur.length === 0) { cur.push(norm); continue; }
+    if (cur.length === 0) {
+      cur.push(norm);
+      if (widthMode) { resetFit(); fitsInBox(text); }
+      continue;
+    }
 
     const prev = cur[cur.length - 1];
     const gap = norm.start - prev.end;
@@ -69,16 +100,82 @@ export function groupWords(words, opts) {
 
     // Break AFTER a sentence-ending word (prev), never before the current
     // word — the old `currEnds` rule orphaned "channel." into its own caption.
+    // Capacity break: measured box overflow (width mode) or char budget.
+    // fitsInBox() advances the wrap state only when the word fits, so a
+    // rejected word starts the next group cleanly.
+    const overCapacity = widthMode ? !fitsInBox(text) : chars > charBudget;
+
     if (gap > maxGap || cur.length >= maxWords || dur > maxDur ||
-        chars > charBudget || SENTENCE_END.test(prev.text)) {
+        overCapacity || SENTENCE_END.test(prev.text)) {
       groups.push(_toGroup(cur));
       cur = [norm];
+      if (widthMode) { resetFit(); fitsInBox(text); }
     } else {
       cur.push(norm);
     }
   }
   if (cur.length) groups.push(_toGroup(cur));
-  return groups;
+  return opts.mergeOrphans ? _mergeOrphans(groups, opts) : groups;
+}
+
+/* A single short word alone on screen ("Yes.") reads as a mistake and, at
+   large font sizes, renders comically big next to its neighbours. Merge it
+   backwards when it's genuinely adjacent — never across a real pause, and
+   never past the caption box. */
+function _mergeOrphans(groups, opts) {
+  const maxGap = opts.maxGap != null ? opts.maxGap : 0.4;
+  const maxWords = Math.max(1, opts.maxWordsPerSegment || 4);
+  const widthMode = typeof opts.measure === 'function' && opts.maxWidthPx > 0;
+  const maxLines = Math.max(1, opts.maxLinesPerSegment || 1);
+  const spacePx = opts.spacePx || 0;
+  const charBudget = (opts.maxCharsPerSegment || 30) * maxLines;
+
+  const fitsMerged = (words) => {
+    if (widthMode) {
+      // greedy re-wrap of the merged word list; must still fit maxLines
+      let lines = 1, width = 0;
+      for (const w of words) {
+        const wpx = opts.measure(w.text);
+        const withWord = width === 0 ? wpx : width + spacePx + wpx;
+        if (withWord <= opts.maxWidthPx) { width = withWord; continue; }
+        if (lines < maxLines) { lines += 1; width = wpx; continue; }
+        return false;
+      }
+      return true;
+    }
+    return words.reduce((a, w) => a + w.text.length + 1, -1) <= charBudget;
+  };
+
+  const out = [];
+  for (const g of groups) {
+    const prev = out[out.length - 1];
+    const isOrphan = g.words.length === 1 && (g.end - g.start) < 0.6;
+    if (prev && isOrphan) {
+      const gap = g.start - prev.end;
+      const merged = prev.words.concat(g.words);
+      if (gap <= maxGap && merged.length <= maxWords && fitsMerged(merged)) {
+        out[out.length - 1] = _toGroup(merged);
+        continue;
+      }
+    }
+    out.push(g);
+  }
+  return out;
+}
+
+/* ── Vertical placement ────────────────────────────────────── */
+
+/**
+ * Clamp a caption block's centre Y so no line lands outside the comp.
+ * Without this, 2-line captions at a low posY (or a big font) clip the
+ * bottom edge. Returns the safe centre Y in comp pixels.
+ */
+export function clampBlockY({ requestedY, compH, nLines, lineHeight, marginPct = 0.03 }) {
+  const half = ((nLines - 1) / 2) * lineHeight + lineHeight / 2;
+  const lo = compH * marginPct + half;
+  const hi = compH * (1 - marginPct) - half;
+  if (hi < lo) return compH / 2;          // block taller than the comp
+  return Math.min(hi, Math.max(lo, requestedY));
 }
 
 function _toGroup(seg) {
@@ -239,4 +336,43 @@ export function captionTiming(groups, opts) {
     if (tOut <= tIn) tOut = tIn + frameDur;
     return { in: tIn, out: tOut };
   });
+}
+
+/* ── Read-back: merge AE-side manual timing into the panel's words ── */
+
+/**
+ * Map word markers pulled from AE captions back onto the panel's word list.
+ * AE is the source of truth for TIME only — text edits stay panel-side.
+ *
+ * Matching is positional-with-text-confirmation: walk the panel words once,
+ * consuming markers in order; a marker only claims a word when the text
+ * matches (case/punctuation-insensitive), so a caption whose words were
+ * edited in the panel can't silently retime the wrong word.
+ *
+ * captions: [{ words: [{ text, time }] }] (from ef_readCaptionTimings)
+ * Returns { words: newWords, matched: n, skipped: n } — pure, no mutation.
+ */
+export function matchTimingsToWords(words, captions) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const flat = [];
+  for (const cap of captions || []) for (const m of (cap.words || [])) flat.push(m);
+
+  const out = words.map((w) => ({ ...w }));
+  let wi = 0, matched = 0, skipped = 0;
+  for (const m of flat) {
+    // find the next panel word with the same text (bounded lookahead so one
+    // deleted word can't desync the whole transcript)
+    let found = -1;
+    for (let k = wi; k < Math.min(out.length, wi + 8); k++) {
+      if (norm(out[k].word || out[k].text) === norm(m.text)) { found = k; break; }
+    }
+    if (found === -1) { skipped++; continue; }
+    const w = out[found];
+    const dur = Math.max(0.02, (w.end || 0) - (w.start || 0));
+    w.start = m.time;
+    w.end = m.time + dur;
+    matched++;
+    wi = found + 1;
+  }
+  return { words: out, matched, skipped };
 }

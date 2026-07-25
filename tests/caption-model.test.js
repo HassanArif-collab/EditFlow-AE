@@ -289,3 +289,219 @@ test('char mode still works when no measure is provided (back-compat)', () => {
   assert.equal(lines.length, 2);
   assert.equal(lines[0].text, 'aaaa bbbb');
 });
+
+/* ── read-back matching (AE markers → panel words) ── */
+test('matchTimingsToWords retimes words in order, keeping duration', () => {
+  const words = [
+    { word: 'Hello', start: 0, end: 0.4 },
+    { word: 'world', start: 0.5, end: 0.9 },
+  ];
+  const caps = [{ words: [{ text: 'Hello', time: 1.0 }, { text: 'world', time: 1.6 }] }];
+  const r = M.matchTimingsToWords(words, caps);
+  assert.equal(r.matched, 2);
+  assert.equal(r.words[0].start, 1.0);
+  assert.ok(Math.abs(r.words[0].end - 1.4) < 1e-9, 'duration preserved');
+  assert.equal(r.words[1].start, 1.6);
+});
+
+test('matchTimingsToWords matches repeated words sequentially, not all at once', () => {
+  const words = [
+    { word: 'go', start: 0, end: 0.2 },
+    { word: 'go', start: 0.3, end: 0.5 },
+    { word: 'go', start: 0.6, end: 0.8 },
+  ];
+  const caps = [{ words: [{ text: 'go', time: 5 }, { text: 'go', time: 6 }, { text: 'go', time: 7 }] }];
+  const r = M.matchTimingsToWords(words, caps);
+  assert.deepEqual(r.words.map((w) => w.start), [5, 6, 7]);
+});
+
+test('matchTimingsToWords ignores punctuation/case differences', () => {
+  const words = [{ word: 'Yes.', start: 0, end: 0.3 }];
+  const r = M.matchTimingsToWords(words, [{ words: [{ text: 'YES', time: 2.5 }] }]);
+  assert.equal(r.matched, 1);
+  assert.equal(r.words[0].start, 2.5);
+});
+
+test('matchTimingsToWords leaves unmatched words untouched and reports skips', () => {
+  const words = [{ word: 'alpha', start: 0, end: 0.3 }, { word: 'beta', start: 0.4, end: 0.7 }];
+  const r = M.matchTimingsToWords(words, [{ words: [{ text: 'zzz', time: 9 }] }]);
+  assert.equal(r.matched, 0);
+  assert.equal(r.skipped, 1);
+  assert.deepEqual(r.words, words, 'no mutation of unmatched words');
+});
+
+test('matchTimingsToWords does not mutate its input', () => {
+  const words = [{ word: 'Hello', start: 0, end: 0.4 }];
+  M.matchTimingsToWords(words, [{ words: [{ text: 'Hello', time: 3 }] }]);
+  assert.equal(words[0].start, 0);
+});
+
+/* ── width-aware grouping: font size stays constant, word count adapts ── */
+test('width mode: doubling font size reduces words per caption (no shrink ever)', () => {
+  const words = Array.from({ length: 12 }, (_, i) => ({ word: 'hello', start: i * 0.4, end: i * 0.4 + 0.3 }));
+  const base = { maxWordsPerSegment: 8, maxDurationPerSegment: 99, maxGap: 99, maxLinesPerSegment: 2, spacePx: 10 };
+  const small = M.groupWords(words, { ...base, maxWidthPx: 400, measure: (t) => t.length * 10 });
+  const big = M.groupWords(words, { ...base, maxWidthPx: 400, measure: (t) => t.length * 20 });
+  const maxSmall = Math.max(...small.map((g) => g.words.length));
+  const maxBig = Math.max(...big.map((g) => g.words.length));
+  assert.ok(maxBig < maxSmall, `expected fewer words at big font: ${maxBig} vs ${maxSmall}`);
+});
+
+test('width mode: every group fits maxLines at the measured width', () => {
+  const words = Array.from({ length: 10 }, (_, i) => ({ word: 'abcdefgh', start: i * 0.3, end: i * 0.3 + 0.2 }));
+  const opts = { maxWordsPerSegment: 99, maxDurationPerSegment: 99, maxGap: 99,
+    maxLinesPerSegment: 2, maxWidthPx: 200, measure: (t) => t.length * 10, spacePx: 10 };
+  for (const g of M.groupWords(words, opts)) {
+    const lines = M.wrapLines(g, opts);
+    assert.ok(lines.length <= 2, `group wrapped to ${lines.length} lines`);
+    for (const ln of lines) {
+      const w = ln.text.split(' ').reduce((a, t) => a + t.length * 10, 0)
+        + (ln.text.split(' ').length - 1) * 10;
+      assert.ok(w <= 200, `line width ${w} exceeds box 200`);
+    }
+  }
+});
+
+test('width mode still honours maxWords/gap/sentence breaks', () => {
+  const words = [
+    { word: 'a', start: 0, end: 0.1 }, { word: 'b.', start: 0.15, end: 0.25 },
+    { word: 'c', start: 0.3, end: 0.4 },
+  ];
+  const groups = M.groupWords(words, { maxWordsPerSegment: 8, maxLinesPerSegment: 2,
+    maxWidthPx: 9999, measure: (t) => t.length * 10, spacePx: 10, maxGap: 99, maxDurationPerSegment: 99 });
+  assert.equal(groups.length, 2, 'sentence end still breaks');
+});
+
+test('char mode unchanged when no measure provided (back-compat)', () => {
+  const words = [{ word: 'a', start: 0, end: 1 }, { word: 'b', start: 1, end: 2 }];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4 }).length, 1);
+});
+
+/* ── vertical clamp: captions never clip the comp edge ── */
+test('clampBlockY keeps a 2-line block inside the bottom margin', () => {
+  const y = M.clampBlockY({ requestedY: 1824, compH: 1920, nLines: 2, lineHeight: 96, marginPct: 0.03 });
+  assert.ok(y + ((2 - 1) / 2) * 96 + 96 / 2 <= 1920 * 0.97 + 1e-9, `block bottom escaped: y=${y}`);
+});
+
+test('clampBlockY passes an unconstrained request through untouched', () => {
+  assert.equal(M.clampBlockY({ requestedY: 960, compH: 1920, nLines: 1, lineHeight: 96, marginPct: 0.03 }), 960);
+});
+
+test('clampBlockY also guards the top edge', () => {
+  const y = M.clampBlockY({ requestedY: 10, compH: 1920, nLines: 2, lineHeight: 96, marginPct: 0.03 });
+  assert.ok(y - ((2 - 1) / 2) * 96 - 96 / 2 >= 1920 * 0.03 - 1e-9, `block top escaped: y=${y}`);
+});
+
+/* ── orphan merge: the lonely "Yes." rule ── */
+test('a 1-word, short, adjacent caption merges into its neighbour', () => {
+  const words = [
+    { word: 'Great', start: 0, end: 0.4 }, { word: 'work.', start: 0.45, end: 0.8 },
+    { word: 'Yes.', start: 1.0, end: 1.3 },
+    { word: 'Moving', start: 2.6, end: 3.0 }, { word: 'on.', start: 3.05, end: 3.4 },
+  ];
+  const groups = M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4, mergeOrphans: true });
+  assert.equal(groups.length, 2, groups.map((g) => g.text).join(' | '));
+  assert.match(groups[0].text, /Yes\.$/);
+});
+
+test('orphans stay separate across a real pause', () => {
+  const words = [
+    { word: 'Hello', start: 0, end: 0.4 },
+    { word: 'Yes.', start: 3.0, end: 3.3 },
+  ];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4, mergeOrphans: true }).length, 2);
+});
+
+test('orphan merge never exceeds the measured box', () => {
+  const words = [
+    { word: 'aaaaa', start: 0, end: 0.3 }, { word: 'bbbbb', start: 0.35, end: 0.6 },
+    { word: 'cc.', start: 0.65, end: 0.9 },
+  ];
+  const opts = { maxWordsPerSegment: 2, maxGap: 9, mergeOrphans: true, maxLinesPerSegment: 1,
+    maxWidthPx: 100, measure: (t) => t.length * 10, spacePx: 0 };
+  for (const g of M.groupWords(words, opts)) {
+    const w = g.words.reduce((a, x) => a + x.text.length * 10, 0);
+    assert.ok(w <= 100, `merged group ${g.text} = ${w}px exceeds box`);
+  }
+});
+
+test('mergeOrphans off by default leaves the orphan alone', () => {
+  const words = [
+    { word: 'Great', start: 0, end: 0.4 }, { word: 'work.', start: 0.45, end: 0.8 },
+    { word: 'Yes.', start: 1.0, end: 1.3 },
+  ];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4, maxGap: 0.4 }).length, 2);
+});
+
+/* ── platform safe zones ── */
+const SZ = loadEsm(path.resolve(__dirname, '..', 'cep-panel-ae', 'client', 'src', 'safe-zones.js'));
+
+test('every safe-zone rect stays inside the frame', () => {
+  for (const [key, zone] of Object.entries(SZ.SAFE_ZONES)) {
+    for (const r of zone.unsafe) {
+      assert.ok(r.x >= 0 && r.y >= 0, `${key} ${r.tag} negative origin`);
+      assert.ok(r.x + r.w <= 1.0001 && r.y + r.h <= 1.0001, `${key} ${r.tag} overflows frame`);
+      assert.ok(r.w > 0 && r.h > 0, `${key} ${r.tag} empty`);
+    }
+  }
+});
+
+test('a caption box low on screen hits the platform caption zone', () => {
+  const hits = SZ.boxIntersectsUnsafe('tiktok', { x: 0.1, y: 0.75, w: 0.5, h: 0.1 });
+  assert.ok(hits.length > 0);
+  assert.match(hits[0].tag, /caption/);
+});
+
+test('a centred mid-frame box is safe on every platform', () => {
+  for (const key of Object.keys(SZ.SAFE_ZONES)) {
+    assert.equal(SZ.boxIntersectsUnsafe(key, { x: 0.15, y: 0.45, w: 0.5, h: 0.1 }).length, 0, key);
+  }
+});
+
+test('a right-edge box hits the action rail (like/comment buttons)', () => {
+  const hits = SZ.boxIntersectsUnsafe('reels', { x: 0.75, y: 0.45, w: 0.2, h: 0.1 });
+  assert.ok(hits.length > 0);
+  assert.match(hits[0].tag, /rail/);
+});
+
+test('unknown zone key returns no hits instead of throwing', () => {
+  assert.deepEqual(SZ.boxIntersectsUnsafe('none', { x: 0, y: 0, w: 1, h: 1 }), []);
+});
+
+/* ── pro easing set ── */
+test('expo_out is fast out of the gate and lands exactly on 1', () => {
+  assert.ok(M.EASINGS.expo_out(0.35) > 0.8, String(M.EASINGS.expo_out(0.35)));
+  assert.equal(M.EASINGS.expo_out(1), 1);
+  assert.equal(M.EASINGS.expo_out(0), 0);
+});
+
+test('back_out overshoots past 1 then settles on 1', () => {
+  assert.ok(M.EASINGS.back_out(0.7) > 1, 'expected overshoot, got ' + M.EASINGS.back_out(0.7));
+  assert.ok(Math.abs(M.EASINGS.back_out(1) - 1) < 1e-9);
+});
+
+test('all easings are monotonic-ish and finite across the ramp', () => {
+  for (const [name, fn] of Object.entries(M.EASINGS)) {
+    for (let p = 0; p <= 1.0001; p += 0.05) {
+      assert.ok(Number.isFinite(fn(p)), `${name} @ ${p}`);
+    }
+  }
+});
+
+/* ── preview motion matches the AE animators ── */
+test('popin preview scale settles to 1 (matches ef_wordScaleSpringExpr)', () => {
+  const a = M.wordAnim('popin', { start: 0, intensity: 1 }, 0.6);
+  assert.ok(Math.abs(a.scaleX - 1) < 0.05, 'settled near 1, got ' + a.scaleX);
+  const early = M.wordAnim('popin', { start: 0, intensity: 1 }, -0.1);
+  assert.equal(early.opacity, 0, 'invisible before its word');
+});
+
+test('typewriter preview is a hard step (matches ef_wordStepExpr)', () => {
+  assert.equal(M.wordAnim('typewriter', { start: 1 }, 0.99).opacity, 0);
+  assert.equal(M.wordAnim('typewriter', { start: 1 }, 1.01).opacity, 1);
+});
+
+test('bounce preview settles to rest (matches ef_wordBounceExpr)', () => {
+  const a = M.wordAnim('bounce', { start: 0, intensity: 1 }, 1.2);
+  assert.ok(Math.abs(a.dy) < 2, 'settled, got dy=' + a.dy);
+});

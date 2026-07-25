@@ -45,6 +45,25 @@ export function groupWords(words, opts) {
   const maxGap = opts.maxGap != null ? opts.maxGap : 0.4;
   const charBudget = maxChars * maxLines;
 
+  // Width mode: decide capacity from MEASURED pixels against the caption
+  // box instead of letter count. This is what keeps the rendered font size
+  // constant — a bigger font means fewer words per caption, never a
+  // shrunk caption. Falls back to the char budget when no measurer is
+  // supplied (Node tests, callers without a canvas).
+  const widthMode = typeof opts.measure === 'function' && opts.maxWidthPx > 0;
+  const spacePx = opts.spacePx || 0;
+  let lineCount = 1, lineWidth = 0;
+  const resetFit = () => { lineCount = 1; lineWidth = 0; };
+  /* Does `text` still fit the box within maxLines? Mirrors wrapLines'
+     greedy fill, advanced one word at a time as the group grows. */
+  const fitsInBox = (text) => {
+    const wpx = opts.measure(text);
+    const withWord = lineWidth === 0 ? wpx : lineWidth + spacePx + wpx;
+    if (withWord <= opts.maxWidthPx) { lineWidth = withWord; return true; }
+    if (lineCount < maxLines) { lineCount += 1; lineWidth = wpx; return true; }
+    return false;
+  };
+
   const groups = [];
   let cur = [];
   for (let i = 0; i < (words || []).length; i++) {
@@ -58,7 +77,11 @@ export function groupWords(words, opts) {
       idx: w.idx != null ? w.idx : i,
       pill: !!w.pill,
     };
-    if (cur.length === 0) { cur.push(norm); continue; }
+    if (cur.length === 0) {
+      cur.push(norm);
+      if (widthMode) { resetFit(); fitsInBox(text); }
+      continue;
+    }
 
     const prev = cur[cur.length - 1];
     const gap = norm.start - prev.end;
@@ -69,10 +92,16 @@ export function groupWords(words, opts) {
 
     // Break AFTER a sentence-ending word (prev), never before the current
     // word — the old `currEnds` rule orphaned "channel." into its own caption.
+    // Capacity break: measured box overflow (width mode) or char budget.
+    // fitsInBox() advances the wrap state only when the word fits, so a
+    // rejected word starts the next group cleanly.
+    const overCapacity = widthMode ? !fitsInBox(text) : chars > charBudget;
+
     if (gap > maxGap || cur.length >= maxWords || dur > maxDur ||
-        chars > charBudget || SENTENCE_END.test(prev.text)) {
+        overCapacity || SENTENCE_END.test(prev.text)) {
       groups.push(_toGroup(cur));
       cur = [norm];
+      if (widthMode) { resetFit(); fitsInBox(text); }
     } else {
       cur.push(norm);
     }

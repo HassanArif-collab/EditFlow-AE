@@ -335,3 +335,44 @@ test('matchTimingsToWords does not mutate its input', () => {
   M.matchTimingsToWords(words, [{ words: [{ text: 'Hello', time: 3 }] }]);
   assert.equal(words[0].start, 0);
 });
+
+/* ── width-aware grouping: font size stays constant, word count adapts ── */
+test('width mode: doubling font size reduces words per caption (no shrink ever)', () => {
+  const words = Array.from({ length: 12 }, (_, i) => ({ word: 'hello', start: i * 0.4, end: i * 0.4 + 0.3 }));
+  const base = { maxWordsPerSegment: 8, maxDurationPerSegment: 99, maxGap: 99, maxLinesPerSegment: 2, spacePx: 10 };
+  const small = M.groupWords(words, { ...base, maxWidthPx: 400, measure: (t) => t.length * 10 });
+  const big = M.groupWords(words, { ...base, maxWidthPx: 400, measure: (t) => t.length * 20 });
+  const maxSmall = Math.max(...small.map((g) => g.words.length));
+  const maxBig = Math.max(...big.map((g) => g.words.length));
+  assert.ok(maxBig < maxSmall, `expected fewer words at big font: ${maxBig} vs ${maxSmall}`);
+});
+
+test('width mode: every group fits maxLines at the measured width', () => {
+  const words = Array.from({ length: 10 }, (_, i) => ({ word: 'abcdefgh', start: i * 0.3, end: i * 0.3 + 0.2 }));
+  const opts = { maxWordsPerSegment: 99, maxDurationPerSegment: 99, maxGap: 99,
+    maxLinesPerSegment: 2, maxWidthPx: 200, measure: (t) => t.length * 10, spacePx: 10 };
+  for (const g of M.groupWords(words, opts)) {
+    const lines = M.wrapLines(g, opts);
+    assert.ok(lines.length <= 2, `group wrapped to ${lines.length} lines`);
+    for (const ln of lines) {
+      const w = ln.text.split(' ').reduce((a, t) => a + t.length * 10, 0)
+        + (ln.text.split(' ').length - 1) * 10;
+      assert.ok(w <= 200, `line width ${w} exceeds box 200`);
+    }
+  }
+});
+
+test('width mode still honours maxWords/gap/sentence breaks', () => {
+  const words = [
+    { word: 'a', start: 0, end: 0.1 }, { word: 'b.', start: 0.15, end: 0.25 },
+    { word: 'c', start: 0.3, end: 0.4 },
+  ];
+  const groups = M.groupWords(words, { maxWordsPerSegment: 8, maxLinesPerSegment: 2,
+    maxWidthPx: 9999, measure: (t) => t.length * 10, spacePx: 10, maxGap: 99, maxDurationPerSegment: 99 });
+  assert.equal(groups.length, 2, 'sentence end still breaks');
+});
+
+test('char mode unchanged when no measure provided (back-compat)', () => {
+  const words = [{ word: 'a', start: 0, end: 1 }, { word: 'b', start: 1, end: 2 }];
+  assert.equal(M.groupWords(words, { maxWordsPerSegment: 4 }).length, 1);
+});

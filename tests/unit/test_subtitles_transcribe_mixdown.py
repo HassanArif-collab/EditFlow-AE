@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import pytest
 from unittest.mock import AsyncMock, patch
 
 # ── Locate the repo ────────────────────────────────────────────────────
@@ -295,3 +296,10 @@ if __name__ == "__main__":
     test_transcribe_mixdown_500_when_upload_save_fails()
     print("OK: 500 when upload save fails")
     print("\nAll tests passed.")
+
+
+def test_whisperx_importable_or_documented():
+    """Phase 1 requires forced alignment. If this SKIPS, word timing is
+    running on plain Whisper (~200-300ms error) — the #1 cause of
+    'captions don't match the voice'. Keep the degradation visible."""
+    pytest.importorskip("whisperx", reason="whisperx not installed — timing accuracy degraded")

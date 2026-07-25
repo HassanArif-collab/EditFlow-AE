@@ -1817,15 +1817,21 @@ function _measureCompPx(text) {
 /* Wrap a group's words into lines that fit the caption box (boxWidthPct of
    comp width) using measured widths. This is what keeps the font size
    CONSTANT: long captions wrap instead of shrinking. */
-function _wrapForBox(g) {
+/* THE shared box options. Grouping and wrapping must use identical values
+   or a caption can be grouped to fit and then wrap to a third line. */
+function _boxOpts() {
   const compW = (S.compInfo && S.compInfo.width) || 1920;
-  return wrapLines(g, {
+  return {
     maxLinesPerSegment: S.maxLinesPerSegment,
     maxCharsPerSegment: S.maxCharsPerSegment,
     maxWidthPx: compW * (S.boxWidthPct / 100),
     measure: _measureCompPx,
     spacePx: S.fontSize * LAYOUT.wordGapEm,
-  });
+  };
+}
+
+function _wrapForBox(g) {
+  return wrapLines(g, _boxOpts());
 }
 
 function _pillScale(pillStart, t) {
@@ -1866,12 +1872,13 @@ function _roundRect(ctx, x, y, w, h, r) {
 }
 
 function _groupWordsForPreview(words) {
-  // Single source of truth shared with tests + (Phase 3) the jsx config.
+  // Single source of truth shared with tests + the jsx config. Grouping
+  // takes the SAME box options as wrapping (_boxOpts), so words-per-caption
+  // adapts to the measured font size and the rendered size never changes.
   return groupWords(words, {
+    ..._boxOpts(),
     maxWordsPerSegment: S.maxWordsPerSegment,
-    maxCharsPerSegment: S.maxCharsPerSegment,
     maxDurationPerSegment: S.maxDurationPerSegment,
-    maxLinesPerSegment: S.maxLinesPerSegment,
     maxGap: 0.4,
   });
 }

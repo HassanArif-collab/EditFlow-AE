@@ -140,28 +140,27 @@ if _bridge_enabled():
     from .routes import ae_bridge
     app.include_router(ae_bridge.router, prefix="/api")
 
-panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
-if panel_dir.exists():
-    # Subclass StaticFiles to set no-cache headers on panel assets.
-    # The CEP runtime (CEF/Chromium) caches ES module imports aggressively â€”
-    # `import { foo } from './bar.js'` has no version query, so once bar.js
-    # is fetched it's reused indefinitely. That meant every backend code
-    # fix that touched a non-main.js module silently failed to reach the
-    # panel until users blew away CEF cache manually. With no-store +
-    # must-revalidate, a panel close+reopen always pulls the latest code.
-    class _NoCacheStatic(StaticFiles):
-        async def get_response(self, path, scope):
-            response = await super().get_response(path, scope)
-            # Set on 200/206 responses; let 304/404 etc. pass through unchanged.
-            if response.status_code in (200, 206):
-                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-                response.headers["Pragma"] = "no-cache"
-                response.headers["Expires"] = "0"
-                response.headers["Access-Control-Allow-Origin"] = "*"
-                response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-            return response
-    app.mount("/panel", _NoCacheStatic(directory=panel_dir, html=True), name="panel")
+# Subclass StaticFiles to set no-cache headers on panel assets.
+# The CEP runtime (CEF/Chromium) caches ES module imports aggressively —
+# `import { foo } from './bar.js'` has no version query, so once bar.js
+# is fetched it's reused indefinitely. That meant every code fix that
+# touched a non-main.js module silently failed to reach the panel until
+# users blew away CEF cache manually. With no-store + must-revalidate, a
+# panel close+reopen always pulls the latest code.
+class _NoCacheStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        # Set on 200/206 responses; let 304/404 etc. pass through unchanged.
+        if response.status_code in (200, 206):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
+
 # Serve the After Effects CEP panel client (cep-panel-ae/client)
 panel_ae_dir = Path(__file__).parent.parent / "cep-panel-ae" / "client"
 if panel_ae_dir.exists():

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from .config import init_dirs
-from .routes import agent, chat, diag, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, subtitles, whisper_admin
+from .routes import diag, models_routes, providers, subtitles, whisper_admin, ws
 
 
 def _bridge_enabled() -> bool:
@@ -109,8 +109,8 @@ app = FastAPI(
 
 # CORS â€” allow local browser tooling and Adobe CEP's local-file origin.
 # CEP loads the panel from the extension folder, so fetch() requests can arrive
-# with Origin: null. Without this, the Scan Project button can fail at /api/ping
-# before it ever reaches the Premiere project scanner.
+# with Origin: null. Without this, panel requests fail at /api/ping before
+# they ever reach a route.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "null"],
@@ -121,18 +121,9 @@ app.add_middleware(
 )
 
 # Register routes
-app.include_router(chat.router, prefix="/api")
+app.include_router(ws.router, prefix="/api")
 app.include_router(models_routes.router, prefix="/api")
-app.include_router(media.router, prefix="/api")
 app.include_router(providers.router, prefix="/api")
-app.include_router(pipeline.router, prefix="/api")
-app.include_router(premiere.router, prefix="/api")
-app.include_router(preflight.router, prefix="/api")
-app.include_router(edit.router, prefix="/api")
-app.include_router(agent.router, prefix="/api")
-app.include_router(external_plan.router, prefix="/api")
-app.include_router(review.router, prefix="/api")
-app.include_router(script_extract.router)
 app.include_router(whisper_admin.router, prefix="/api")
 app.include_router(subtitles.router, prefix="/api")
 app.include_router(diag.router, prefix="/api")
@@ -140,28 +131,27 @@ if _bridge_enabled():
     from .routes import ae_bridge
     app.include_router(ae_bridge.router, prefix="/api")
 
-panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
-if panel_dir.exists():
-    # Subclass StaticFiles to set no-cache headers on panel assets.
-    # The CEP runtime (CEF/Chromium) caches ES module imports aggressively â€”
-    # `import { foo } from './bar.js'` has no version query, so once bar.js
-    # is fetched it's reused indefinitely. That meant every backend code
-    # fix that touched a non-main.js module silently failed to reach the
-    # panel until users blew away CEF cache manually. With no-store +
-    # must-revalidate, a panel close+reopen always pulls the latest code.
-    class _NoCacheStatic(StaticFiles):
-        async def get_response(self, path, scope):
-            response = await super().get_response(path, scope)
-            # Set on 200/206 responses; let 304/404 etc. pass through unchanged.
-            if response.status_code in (200, 206):
-                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-                response.headers["Pragma"] = "no-cache"
-                response.headers["Expires"] = "0"
-                response.headers["Access-Control-Allow-Origin"] = "*"
-                response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-            return response
-    app.mount("/panel", _NoCacheStatic(directory=panel_dir, html=True), name="panel")
+# Subclass StaticFiles to set no-cache headers on panel assets.
+# The CEP runtime (CEF/Chromium) caches ES module imports aggressively —
+# `import { foo } from './bar.js'` has no version query, so once bar.js
+# is fetched it's reused indefinitely. That meant every code fix that
+# touched a non-main.js module silently failed to reach the panel until
+# users blew away CEF cache manually. With no-store + must-revalidate, a
+# panel close+reopen always pulls the latest code.
+class _NoCacheStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        # Set on 200/206 responses; let 304/404 etc. pass through unchanged.
+        if response.status_code in (200, 206):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
+
 # Serve the After Effects CEP panel client (cep-panel-ae/client)
 panel_ae_dir = Path(__file__).parent.parent / "cep-panel-ae" / "client"
 if panel_ae_dir.exists():
@@ -175,12 +165,10 @@ async def root():
         "version": "2.0.0",
         "description": "AI-powered video editing pipeline",
         "features": [
-            "Video analysis (transcription, filler detection)",
-            "Script-based auto-cutting (Urdu video + English script)",
-            "Visual placement from mapping documents",
+            "Audio transcription with word-level timestamps (WhisperX)",
+            "Animated word-by-word captions for After Effects",
+            "SRT export",
             "Multi-provider LLM management",
-            "AI chat for editing decisions",
-            "Premiere Pro CEP panel integration",
         ],
         "docs": "/docs",
     }

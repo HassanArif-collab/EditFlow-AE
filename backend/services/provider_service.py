@@ -1302,33 +1302,28 @@ class ProviderService:
     # ── Rule-Based Fallback ──
 
     # Fallback responses surfaced when no LLM provider is connected.
-    # Keep endpoints current with the v2 pipeline (analyze → cut → visuals → premiere).
+    # Keep these in step with the routes that actually exist — this repo is
+    # the After Effects captions tool, not the old editing pipeline.
     _FALLBACK_PATTERNS = [
         (r"\b(hello|hi|hey|greetings|salam|assalam)\b",
-         "Hello! I'm EditFlow AI. No LLM provider is connected, so I can only "
+         "Hello! I'm EditFlow AE. No LLM provider is connected, so I can only "
          "answer with canned responses right now. Configure a provider in "
          "Settings to unlock full AI replies."),
         (r"\b(help|what can you do|commands)\b",
-         "EditFlow AI — core endpoints:\n"
-         "- POST /api/pipeline/analyze     – transcribe a folder of videos\n"
-         "- POST /api/pipeline/cut         – match a script and build a clean cut\n"
-         "- POST /api/pipeline/cut/execute – render the cut with FFmpeg\n"
-         "- POST /api/pipeline/visuals     – place visuals from a mapping doc\n"
-         "- POST /api/premiere/edl/from-cuts – push cuts to Premiere via EDL\n"
-         "- GET  /api/providers            – manage LLM providers\n"
-         "Configure a provider for natural-language replies."),
-        (r"\b(analy[sz]e|transcribe|transcription|scan)\b",
-         "To analyze a folder of videos, POST /api/pipeline/analyze with "
-         "{ folder_path, language }. Whisper runs locally — no LLM required."),
-        (r"\b(cut|script|clean|edit)\b",
-         "Provide an English script and POST /api/pipeline/cut. The cutter "
-         "matches each line to the best Urdu take and produces a cutting plan."),
-        (r"\b(visual|image|overlay|broll|b-?roll)\b",
-         "POST /api/pipeline/visuals with a mapping document (docx/txt) and "
-         "a visual_folder path. Each entry binds a script line to a visual file."),
-        (r"\b(premiere|timeline|sequence|edl)\b",
-         "Use the CEP panel's Sync / Scan buttons, or POST /api/premiere/edl/"
-         "from-cuts to push the latest cutting result to Premiere's timeline."),
+         "EditFlow AE — core endpoints:\n"
+         "- POST /api/subtitles/transcribe-mixdown – word-level transcription\n"
+         "- POST /api/subtitles/srt                – export captions as SRT\n"
+         "- GET  /api/whisper/status               – Whisper model management\n"
+         "- GET  /api/providers                    – manage LLM providers\n"
+         "Captions themselves are generated in After Effects by the panel."),
+        (r"\b(analy[sz]e|transcribe|transcription)\b",
+         "Transcription runs locally via Whisper/WhisperX — no LLM required. "
+         "Use the panel's Transcribe tab, or POST /api/subtitles/"
+         "transcribe-mixdown with an audio file."),
+        (r"\b(caption|subtitle|srt|word)\b",
+         "Transcribe your comp's audio in the panel, adjust grouping in the "
+         "Content tab, then Generate — you get one AE text layer per caption "
+         "with per-word animation. Export SRT from the Generate tab."),
         (r"\b(provider|ollama|openai|model)\b",
          "Manage providers under /api/providers. Use /api/models/list to "
          "see configured chat/vision models across all providers."),

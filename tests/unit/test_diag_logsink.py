@@ -59,7 +59,7 @@ def test_diag_log_accepts_batch_and_is_junk_safe():
 
 def test_diag_bundle_writes_file_and_returns_path():
     c = TestClient(app)
-    r = c.post("/api/diag/bundle", json={"build": "review-12", "premiere": "23.0"})
+    r = c.post("/api/diag/bundle", json={"build": "review-12", "host": "After Effects 25.0"})
     assert r.status_code == 200
     body = r.json()
     assert body["path"].endswith(".txt")

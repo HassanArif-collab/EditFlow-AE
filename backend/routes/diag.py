@@ -66,7 +66,7 @@ async def diag_log_tail(n: int = 200):
 
 class BundleReq(BaseModel):
     build: Optional[str] = None
-    premiere: Optional[str] = None
+    host: Optional[str] = None   # e.g. "After Effects 25.0"
     session: Optional[str] = None
 
 
@@ -76,7 +76,7 @@ async def diag_bundle(req: BundleReq):
     header = {
         "generated": datetime.datetime.utcnow().isoformat() + "Z",
         "build": req.build or "?",
-        "premiere": req.premiere or "?",
+        "host": req.host or "?",
         "session": req.session or "?",
         "os": platform.platform(),
         "python": platform.python_version(),

@@ -1,7 +1,7 @@
 """
 SQLite registry for EditFlow AI.
 Stores assets, transcripts, scripts, visual maps, cutting results, jobs,
-and Premiere capability probes.
+and transcript caching.
 """
 from __future__ import annotations
 
@@ -223,17 +223,6 @@ class SQLiteRegistry:
                 title,
                 body,
                 tags
-            );
-
-            -- Phase A.1: Capability probe persistence
-            -- Cache per (premiere_version, panel_version) so the probe
-            -- only runs when one changes.
-            CREATE TABLE IF NOT EXISTS premiere_capabilities (
-                premiere_version TEXT NOT NULL,
-                panel_version TEXT NOT NULL,
-                capabilities_json TEXT NOT NULL,
-                probed_at TEXT NOT NULL,
-                PRIMARY KEY (premiere_version, panel_version)
             );
 
             -- Phase B: Source file registry (content-addressed)
@@ -588,55 +577,6 @@ class SQLiteRegistry:
         )
 
     # ── Phase A.1: Capability probe persistence ──
-
-    def upsert_capabilities(
-        self,
-        premiere_version: str,
-        panel_version: str,
-        capabilities_json: str,
-        probed_at: str,
-    ) -> None:
-        """Insert or replace a capability probe result keyed by version pair.
-
-        The CEP panel probes Premiere at boot and POSTs the result.  We
-        persist it so that (a) the probe doesn't re-run for the same
-        version pair and (b) the backend survives restarts.
-        """
-        self.execute(
-            """INSERT OR REPLACE INTO premiere_capabilities
-            (premiere_version, panel_version, capabilities_json, probed_at)
-            VALUES (?, ?, ?, ?)""",
-            (premiere_version, panel_version, capabilities_json, probed_at),
-        )
-
-    def find_capabilities(
-        self,
-        premiere_version: str,
-        panel_version: str,
-    ) -> Optional[Dict[str, Any]]:
-        """Look up a previously stored capability probe by version pair.
-
-        Returns the row dict or None if no probe has been stored for this
-        (premiere_version, panel_version) combination.
-        """
-        return self.fetch_one(
-            """SELECT * FROM premiere_capabilities
-            WHERE premiere_version = ? AND panel_version = ?
-            LIMIT 1""",
-            (premiere_version, panel_version),
-        )
-
-    def find_latest_capabilities(self) -> Optional[Dict[str, Any]]:
-        """Return the most recently probed capabilities, regardless of version.
-
-        Useful as a fallback when version info is not available from the
-        CEP panel.
-        """
-        return self.fetch_one(
-            "SELECT * FROM premiere_capabilities ORDER BY probed_at DESC LIMIT 1"
-        )
-
-    # ── Phase B: Source file registry (content-addressed) ──
 
     def upsert_source_file(
         self,

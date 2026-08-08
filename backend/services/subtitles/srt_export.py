@@ -1,7 +1,7 @@
 """cues[] → SRT text (pure, no I/O).
 
-Exact format matters: comma milliseconds and zero-padded HH:MM:SS, or Premiere
-silently misplaces/rejects cues on import.
+Exact format matters: comma milliseconds and zero-padded HH:MM:SS, or NLEs
+silently misplace or reject cues on import.
 """
 from __future__ import annotations
 

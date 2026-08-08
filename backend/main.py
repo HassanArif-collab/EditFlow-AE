@@ -109,8 +109,8 @@ app = FastAPI(
 
 # CORS â€” allow local browser tooling and Adobe CEP's local-file origin.
 # CEP loads the panel from the extension folder, so fetch() requests can arrive
-# with Origin: null. Without this, the Scan Project button can fail at /api/ping
-# before it ever reaches the Premiere project scanner.
+# with Origin: null. Without this, panel requests fail at /api/ping before
+# they ever reach a route.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "null"],
@@ -165,12 +165,10 @@ async def root():
         "version": "2.0.0",
         "description": "AI-powered video editing pipeline",
         "features": [
-            "Video analysis (transcription, filler detection)",
-            "Script-based auto-cutting (Urdu video + English script)",
-            "Visual placement from mapping documents",
+            "Audio transcription with word-level timestamps (WhisperX)",
+            "Animated word-by-word captions for After Effects",
+            "SRT export",
             "Multi-provider LLM management",
-            "AI chat for editing decisions",
-            "Premiere Pro CEP panel integration",
         ],
         "docs": "/docs",
     }

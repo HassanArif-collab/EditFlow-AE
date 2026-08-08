@@ -1,8 +1,8 @@
 """Tests for cues[] → SRT export.
 
 WHY: the SRT file is both a user deliverable and the caption-track engine's
-input to Premiere. A malformed timestamp (dot instead of comma, missing
-zero-pad) makes PPro silently misplace or reject cues — pin the exact format.
+input to any NLE. A malformed timestamp (dot instead of comma, missing
+zero-pad) makes players silently misplace or reject cues — pin the format.
 """
 from __future__ import annotations
 

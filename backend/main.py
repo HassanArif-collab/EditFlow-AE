@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from .config import init_dirs
-from .routes import agent, chat, diag, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, subtitles, whisper_admin
+from .routes import diag, models_routes, providers, subtitles, whisper_admin, ws
 
 
 def _bridge_enabled() -> bool:
@@ -121,18 +121,9 @@ app.add_middleware(
 )
 
 # Register routes
-app.include_router(chat.router, prefix="/api")
+app.include_router(ws.router, prefix="/api")
 app.include_router(models_routes.router, prefix="/api")
-app.include_router(media.router, prefix="/api")
 app.include_router(providers.router, prefix="/api")
-app.include_router(pipeline.router, prefix="/api")
-app.include_router(premiere.router, prefix="/api")
-app.include_router(preflight.router, prefix="/api")
-app.include_router(edit.router, prefix="/api")
-app.include_router(agent.router, prefix="/api")
-app.include_router(external_plan.router, prefix="/api")
-app.include_router(review.router, prefix="/api")
-app.include_router(script_extract.router)
 app.include_router(whisper_admin.router, prefix="/api")
 app.include_router(subtitles.router, prefix="/api")
 app.include_router(diag.router, prefix="/api")

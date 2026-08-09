@@ -10,8 +10,9 @@
 - **Lane C — Deterministic compiler (the control).** Pure code turns a shot into a build spec. No AI. This is the baseline every other lane has to beat.
 - **Lane B — Local agent.** The Ollama model inside the panel translates a shot spec into calls to the AE primitives. Small model, constrained vocabulary, runs offline.
 - **Lane A — Web agent.** A cloud model (the one already wired into your Documentary Studio app) writes actual ExtendScript builder code, pushes it to a branch in this repo, and the panel loads and runs it behind a review gate.
+- **Lane D — Hybrid: think → build → verify.** The agent makes the *creative* decisions (which title variant, which bar carries the accent, does this stat deserve a pulse) and emits a **spec patch, never code**; Lane C's compiler builds it; then the agent is shown `ef_vis_dumpShot` plus rendered frames and either signs off or issues one corrected patch. The model never computes a coordinate, and never sees a pixel it didn't get a chance to check.
 
-All three take the **same** `shotlist.json` and produce comps in the **same** AE project, then get scored by the **same** harness — build success, spec fidelity, archetype-rule compliance, and rendered frames you eyeball side by side.
+All four take the **same** `shotlist.json` and produce comps in the **same** AE project, then get scored by the **same** harness — build success, spec fidelity, archetype-rule compliance, and rendered frames you eyeball side by side.
 
 **Tech Stack:** CEP panel (vanilla ES modules), ExtendScript ES3, node:test, the existing agent bridge for verification, Ollama via the backend's provider layer, and the Documentary Studio app's tunnel API for Lane A.
 
@@ -80,7 +81,35 @@ A comparison without a scorecard is just vibes, and vibes can't tell you whether
 | **Looks right** | 3 rendered frames per shot per lane, shown side by side | The part only you can judge |
 | **Cost + time** | Seconds to build, tokens/credits spent | A lane that's 2% better and 40× slower is not better |
 
-**The control group is the point.** If Lane C (no AI at all) ties Lane A and Lane B, that's the answer — use the compiler and stop paying for tokens. I expect Lane C to win on the three archetypes in this plan precisely *because* they're deterministic, and to lose the moment you add an archetype nobody wrote a builder for. That's the real question the bake-off answers: **where does the agent start earning its keep?**
+Two extra columns exist only for the agent lanes: **first-try rate** (built correctly with no correction round — the honest measure of whether the environment brief is working) and **rounds used** (Lane D's think→verify loop, capped at 2).
+
+**The control group is the point.** If Lane C (no AI at all) ties the agent lanes, that's the answer — use the compiler and stop paying for tokens. I expect Lane C to win on these three archetypes precisely *because* they're deterministic, and to lose the moment you add an archetype nobody wrote a builder for. That's the real question the bake-off answers: **where does the agent start earning its keep?**
+
+**And Lane D is the likely overall winner**, because it doesn't ask the model to do the thing models are bad at. Lane C can't decide that *this* bar deserves the accent or that *this* stat wants a pulse; Lane A can decide it but might also invent a matchname; Lane D lets the model decide and the compiler build. Structurally it should score Lane C's fidelity with better creative choices — and the scorecard will say whether that's true or whether I'm flattering my own design.
+
+## Stopping the web agent from hallucinating
+
+The web agent is the one that can't grep our repo — it only knows what we hand it. So we hand it a lot, and four different kinds of "a lot", because they fail differently:
+
+**1. The environment brief** (`docs/ae-agent-brief/`, generated — Task 5.0). Committed into the `visual-v8-ae` prompt copy so the app serves it at `/api/prompts/visual-v8-ae/<file>`, which is how your agents already read instructions.
+
+| File | Contents |
+|---|---|
+| `ENVIRONMENT.md` | AE version actually installed, ExtendScript is **ES3** (no `let`/`const`/arrow/`toLocaleString`/`JSON`), no debugger, single-threaded, expressions run on a separate legacy engine |
+| `MATCHNAMES.md` | Only the matchnames this repo has **actually run in AE** — `ADBE Text Animators`, `ADBE Text Expressible Selector`, `ADBE Text Range Type2`, `ADBE Vector Shape - Rect`, … each with the line of working code that uses it |
+| `PRIMITIVES.md` | The `ef_vis_*` API surface it may call, with signatures and the arg ranges the compiler will clamp anyway |
+| `KNOWN_FAILURES.md` | Our scar tissue: markers are 1-indexed; `textIndex` starts at 1; `toLocaleString` doesn't exist so thousands separators are hand-rolled; `inPoint` must be set before `outPoint`; `sourceRectAtTime` needs a time *after* the layer starts; a naive `"ppro"` substring matches `stopPropagation` |
+| `WORKING_EXAMPLES.jsx` | Real, AE-proven excerpts from the captions engine — a text animator with an expression selector, a shape layer with a scale expression, a marker loop |
+
+Generated from the code that already works, not hand-written, so it can't drift from reality (Task 5.0 Step 2 regenerates it).
+
+**2. A live probe, not a stale doc** (`ef_vis_probeEnvironment`, Task 5.0). Returns the actual AE version, whether `canAddProperty("ADBE Text Expressible Selector")` is true on *this* install, the installed font list, and the comp settings. The brief carries a `PROBE` block filled from a real run, so the agent is told what this machine can do rather than what Adobe documents.
+
+**3. The local docs mirror stays the source of truth.** `docs/adobe/` is 1.9 MB of official reference. The brief cites file paths into it, and any claim the agent makes about an API can be checked against it before its code is loaded.
+
+**4. The error round-trip.** When gated code fails in AE, the exact `ERROR:` string, the failing function, and a rendered frame go **back to the agent** with the brief attached, and it gets one correction attempt (Task 5.4). Most model errors in ES3 are single-token — `const` instead of `var` — and are fixed instantly once the model sees the actual message instead of guessing.
+
+That is the same anti-hallucination recipe as the captions engine: *retrieval, verified examples, a live capability probe, and a loop that shows the model its own failures.*
 
 ## Merging the two systems
 
@@ -98,7 +127,7 @@ Documentary Studio app                     EditFlow-AE
 **The contract is one file: `shotlist.json`.** Everything else is optional convenience.
 
 - **Transport, v1: a file.** You export the shotlist from the app, load it in the panel. Zero coupling, works with the tunnel down, and it's how you'll debug when something's wrong.
-- **Transport, v2: the tunnel.** The panel can pull `GET <tunnel>/api/projects/<id>/visual-plans` directly (Task 6.1). Same parser either way.
+- **Transport, v2: the tunnel.** The panel can pull `GET <tunnel>/api/projects/<id>/visual-plans` directly (Task 7.1). Same parser either way.
 - **Lane A's code path.** Your visual-plan record already has a `remotionCode` field — proof this pattern works. We do **not** add a DB column: Lane A pushes its generated builder to a **git branch** in EditFlow-AE (`agent/lane-a/<plan-id>`), which means it's reviewable, diffable, and revertible before a single line runs in your AE.
 - **Results flow back** as `results.json` (the scorecard), which you can attach to the plan or just read in the panel.
 
@@ -1101,6 +1130,75 @@ export function parseBuildScript(raw) {
 
 ## Phase 5 — Lane A: the web agent
 
+### Task 5.0: Build the environment brief + live probe
+
+**Files:** Create `cep-panel-ae/extendscript/visuals.jsx` addition (`ef_vis_probeEnvironment`), `tools/build-agent-brief.js`, `docs/ae-agent-brief/*`.
+
+- [ ] **Step 1: The live probe** (append to `visuals.jsx`):
+
+```js
+/* What can THIS install actually do? The brief quotes this so the agent is
+   told the machine's real capabilities, not Adobe's documented ones. */
+function ef_vis_probeEnvironment() {
+    try {
+        var out = { version: String(app.version), buildName: String(app.buildName || "") };
+        var probe = null, selectorOk = false;
+        try {
+            var tmp = app.project.items.addComp("__ef_probe", 128, 128, 1, 1, 30);
+            probe = tmp.layers.addText("probe");
+            var anim = probe.property("ADBE Text Properties")
+                .property("ADBE Text Animators").addProperty("ADBE Text Animator");
+            selectorOk = anim.property("ADBE Text Selectors")
+                .canAddProperty("ADBE Text Expressible Selector");
+            tmp.remove();
+        } catch (e1) { selectorOk = false; }
+        out.expressionSelector = selectorOk;
+        out.fonts = [];
+        try {
+            var all = app.fonts.allFonts;
+            for (var i = 0; i < Math.min(all.length, 40); i++) {
+                out.fonts.push(String(all[i].postScriptName));
+            }
+        } catch (e2) {}
+        out.saveFrameToPng = false;
+        try { out.saveFrameToPng = (typeof app.project.items.addComp("__ef_probe2", 8, 8, 1, 1, 30).saveFrameToPng === "function"); } catch (e3) {}
+        return ef_json(out);
+    } catch (e) { return ef_vis_err("probeEnvironment: " + e.toString()); }
+}
+```
+
+  (Remove `__ef_probe2` in the same try block — mirror the cleanup the captions probe already does.)
+
+- [ ] **Step 2: The generator** — `tools/build-agent-brief.js` (Node, run manually) reads the *working* source and emits the brief so it can't drift:
+
+```js
+/* Regenerate docs/ae-agent-brief/ from code that already runs in AE.
+   Hand-written API docs rot; generated ones can't. */
+const fs = require('node:fs');
+const path = require('node:path');
+const ROOT = path.resolve(__dirname, '..');
+
+const jsx = fs.readFileSync(path.join(ROOT, 'cep-panel-ae/extendscript/index.jsx'), 'utf8');
+
+// Every matchname the shipping caption engine actually uses, with its line.
+const matchnames = new Map();
+for (const m of jsx.matchAll(/["'](ADBE [^"']+)["']/g)) {
+  const line = jsx.slice(0, m.index).split('\n').length;
+  const src = jsx.split('\n')[line - 1].trim();
+  if (!matchnames.has(m[1])) matchnames.set(m[1], src);
+}
+const md = ['# Verified match names',
+  '', 'Every entry below is used by code that runs in After Effects today.',
+  '', '| Match name | Used as |', '|---|---|',
+  ...[...matchnames].map(([k, v]) => `| \`${k}\` | \`${v.replace(/\|/g, '\\|').slice(0, 90)}\` |`)];
+fs.writeFileSync(path.join(ROOT, 'docs/ae-agent-brief/MATCHNAMES.md'), md.join('\n') + '\n');
+console.log('MATCHNAMES.md:', matchnames.size, 'verified names');
+```
+
+- [ ] **Step 3: Write `KNOWN_FAILURES.md` by hand** — this one is judgement, not extraction. Seed it with the failures this project actually hit: ES3 only (no `let`/`const`/arrow/`toLocaleString`/`JSON`); markers are 1-indexed and AE re-sorts them by time; `textIndex` starts at 1 so guard `textIndex >= 1`; set `inPoint` before `outPoint` or AE preserves the old duration; `sourceRectAtTime` must be called after the layer's start time; expression selectors need `ADBE Text Range Type2` (Words = 3, Characters = 1) and the enum is unverified on AE 2026.
+
+- [ ] **Step 4: Run the generator, commit the brief** — `node tools/build-agent-brief.js`, then commit `docs(agent): generated AE environment brief + live capability probe`.
+
 ### Task 5.1: The static gate for pushed code
 
 **Files:** Create `cep-panel-ae/client/src/lane-web.js`, `tests/lane-web-gate.test.js`.
@@ -1211,9 +1309,100 @@ cp -r visual-v7-glm visual-v8-ae
 - [ ] **Step 3: Verify v7 untouched** — `git status --short prompts/visual-v7-glm` → no output.
 - [ ] **Step 4: Commit in that repo** `feat(prompts): visual-v8-ae lane for the AE builder agent (v7 unchanged)`.
 
-## Phase 6 — The scorecard
+### Task 5.4: The error round-trip
 
-### Task 6.1: Run every lane over the same shotlist
+**Files:** Modify `cep-panel-ae/client/src/lane-web.js`.
+
+- [ ] **Step 1:** When a gated Lane-A builder fails — gate refusal, AE `ERROR:` string, or a fidelity miss — assemble a correction request containing: the original shot spec, the exact failure text, the offending function name, the environment brief's `KNOWN_FAILURES.md`, and (for a fidelity miss) the rendered frame path. One retry only.
+- [ ] **Step 2:** Log every attempt to `results.json` as `attempts: [{n, failure, fixed}]` so the scorecard can show *"Lane A: 2 of 3 shots first-try, 1 after correction"* — first-try rate is the number that actually tells you whether the brief is working.
+- [ ] **Step 3: Commit** `feat(visuals): Lane A error round-trip with one correction attempt`.
+
+## Phase 6 — Lane D: think → build → verify
+
+### Task 6.0: The hybrid lane
+
+**Files:** Create `cep-panel-ae/client/src/lane-hybrid.js`, `tests/lane-hybrid.test.js`.
+
+This is the lane I'd expect to win, and it's cheap because every part already exists: the agent decides, Lane C builds, the bridge checks.
+
+- [ ] **Step 1: Write the failing tests** — the contract is that the agent may only move creative dials, never geometry:
+
+```js
+test('a spec patch may only touch creative fields', () => {
+  const base = { id: 's3', archetype: 'SECTION_TITLE_CARD', title: 'THE MONEY TRAIL',
+                 variant: 'slide_up', stagger: 0.05, duration: 3 };
+  const patched = H.applyPatch(base, { variant: 'scale_center', stagger: 0.08 });
+  assert.equal(patched.variant, 'scale_center');
+  assert.equal(patched.stagger, 0.08);
+});
+
+test('a patch trying to change data or geometry is refused', () => {
+  const base = { id: 's1', archetype: 'STAT_COUNTER', value: 1500000000, duration: 5 };
+  const patched = H.applyPatch(base, { value: 999, duration: 90, x: 0.2 });
+  assert.equal(patched.value, 1500000000, 'the NUMBER is not the agent\'s to change');
+  assert.equal(patched.duration, 5, 'timing comes from the shotlist');
+  assert.equal(patched.x, undefined, 'geometry is never patchable');
+});
+
+test('patched motion values still get clamped to the v7 bands', () => {
+  const base = { id: 's3', archetype: 'SECTION_TITLE_CARD', title: 'X', stagger: 0.05 };
+  assert.equal(H.applyPatch(base, { stagger: 0.9 }).stagger, 0.10);
+});
+
+test('a verdict of "fix" carries a patch; "ok" ends the loop', () => {
+  assert.equal(H.parseVerdict('{"verdict":"ok"}').done, true);
+  const f = H.parseVerdict('{"verdict":"fix","patch":{"variant":"slide_left"},"why":"stagger unclear"}');
+  assert.equal(f.done, false);
+  assert.deepEqual(f.patch, { variant: 'slide_left' });
+});
+```
+
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement**
+
+```js
+/* The ONLY fields an agent may set. Everything else — values, durations,
+   coordinates — comes from the shotlist or the compiler. This whitelist is
+   why the hybrid lane cannot hallucinate a wrong number onto the screen. */
+export const PATCHABLE = {
+  SECTION_TITLE_CARD: ['variant', 'stagger', 'supporting'],
+  STAT_COUNTER: ['pulse', 'unit'],
+  BAR_CHART: ['accentIndex'],
+};
+
+const CLAMPED = { stagger: 'letterStagger' };
+
+export function applyPatch(spec, patch) {
+  const allowed = PATCHABLE[spec.archetype] || [];
+  const out = { ...spec };
+  for (const k of Object.keys(patch || {})) {
+    if (!allowed.includes(k)) continue;                 // silently refused
+    out[k] = CLAMPED[k] ? clampMotion(CLAMPED[k], patch[k]) : patch[k];
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'accentIndex')) {
+    // accentIndex is patchable but must stay in range
+    const i = Number(patch.accentIndex);
+    out.bars = (spec.bars || []).map((b, n) => ({ ...b, accent: n === i }));
+  }
+  return out;
+}
+
+export function parseVerdict(raw) {
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    const v = JSON.parse(m ? m[0] : raw);
+    return { done: v.verdict === 'ok', patch: v.patch || {}, why: v.why || '' };
+  } catch (e) {
+    return { done: true, patch: {}, why: 'unparseable verdict — accepting build' };
+  }
+}
+```
+
+- [ ] **Step 4: Wire the loop** (same file): `think(spec)` → `applyPatch` → `ef_vis_buildShot` → `ef_vis_dumpShot` + one rendered frame → `verify(spec, dump, framePath)` → `parseVerdict`. **Max two rounds**, then stop and keep the best build. Every round is recorded for the scorecard.
+- [ ] **Step 5: Commit** `feat(visuals): Lane D — agent thinks and verifies, compiler builds`.
+
+## Phase 7 — The scorecard
+
+### Task 7.1: Run every lane over the same shotlist
 
 **Files:** Create `cep-panel-ae/client/src/bakeoff.js`, `tests/bakeoff.test.js`.
 
@@ -1265,7 +1454,7 @@ test('scoreboard totals per lane and names a winner only on a real margin', () =
 
 - [ ] **Step 5: Commit** `feat(visuals): bake-off runner + scorecard`.
 
-### Task 6.2: The comparison view
+### Task 7.2: The comparison view
 
 **Files:** Modify `visuals-view.js`.
 
@@ -1273,7 +1462,7 @@ test('scoreboard totals per lane and names a winner only on a real margin', () =
 - [ ] **Step 2:** A "Keep this one" button per row copies the winning lane's comp into your working project and deletes the others' — so the bake-off ends with a usable result, not just a report.
 - [ ] **Step 3: Commit** `feat(visuals): side-by-side lane comparison in the panel`.
 
-### Task 6.3: Pull the shotlist straight from the app (optional)
+### Task 7.3: Pull the shotlist straight from the app (optional)
 
 **Files:** Modify `visuals-view.js`.
 
@@ -1281,9 +1470,9 @@ test('scoreboard totals per lane and names a winner only on a real margin', () =
 - [ ] **Step 2:** Verify against a running Documentary Studio app; if the tunnel is down the field shows the error and the file loader still works.
 - [ ] **Step 3: Commit** `feat(visuals): load a shotlist directly from the Documentary Studio tunnel`.
 
-## Phase 7 — Verification and docs
+## Phase 8 — Verification and docs
 
-### Task 7.1: In-AE verification via the bridge
+### Task 8.1: In-AE verification via the bridge
 
 - [ ] **Step 1:** With the backend running with `EDITFLOW_AGENT_BRIDGE=1` and AE open, build the 3 fixture shots through the panel, then:
 
@@ -1303,17 +1492,17 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 - [ ] **Step 3:** Repeat for `shot_02_BAR_CHART` (axis at 0.3 s, bars mid-rise at 1.0 s, labels present at 2.5 s) and `shot_03_SECTION_TITLE_CARD` (partial letters at 0.3 s — proof of stagger, not a block fade).
 - [ ] **Step 4: Commit** the evidence summary in the message: `test(visuals): AE-verified via bridge — dumps + frames for all 3 archetypes`.
 
-### Task 7.2: Verify each lane in AE, not just the compiler
+### Task 8.2: Verify each lane in AE, not just the compiler
 
-- [ ] **Step 1:** Repeat Task 7.1's dump-and-render checks for **Lane B** and **Lane A** on the same 3 fixture shots, into the sandbox project (`EditFlow Bakeoff.aep`).
+- [ ] **Step 1:** Repeat Task 8.1's dump-and-render checks for **Lane B** and **Lane A** on the same 3 fixture shots, into the sandbox project (`EditFlow Bakeoff.aep`).
 - [ ] **Step 2:** Confirm the Lane A gate actually bites: hand `loadLaneABuilder` a builder containing `app.project.close()` and assert the panel refuses it and never reaches AE.
 - [ ] **Step 3: Commit** `test(visuals): all three lanes AE-verified + gate refusal proven`.
 
-### Task 7.3: Documentation
+### Task 8.3: Documentation
 
 **Files:** Create `docs/ae-visual-shots.md` and `docs/ae-visual-bakeoff.md`.
 
-- [ ] **Step 1: Write `ae-visual-shots.md`** — what the feature does; how to get a `shotlist.json` out of the Documentary Studio app (export a file, or paste the tunnel URL); the 🎬 button flow; the supported archetypes and their required props (copy the table from this plan's "Verified inputs"); the in-AE checklist from Task 7.1; and the explicit limitation that `BROLL_VIDEO` and `EMOTIONAL_MOMENT` stay with the generative tools.
+- [ ] **Step 1: Write `ae-visual-shots.md`** — what the feature does; how to get a `shotlist.json` out of the Documentary Studio app (export a file, or paste the tunnel URL); the 🎬 button flow; the supported archetypes and their required props (copy the table from this plan's "Verified inputs"); the in-AE checklist from Task 8.1; and the explicit limitation that `BROLL_VIDEO` and `EMOTIONAL_MOMENT` stay with the generative tools.
 - [ ] **Step 2: Write `ae-visual-bakeoff.md`** — how to run all three lanes over one shotlist, what each scorecard column means, how to read `results.json`, how to accept a winning comp, and the safety rules for Lane A (git-only delivery, the static gate, the sandbox project, the manual load click).
 - [ ] **Step 3: Commit** `docs(visuals): how to build shots in AE and how to run the lane bake-off`.
 
@@ -1322,14 +1511,15 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 ## Self-review
 
 - **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
-- **Bake-off coverage:** three lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 6; each lane is separately AE-verified in Task 7.2. ✓
-- **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 6.3, both through **one** parser. No schema change to the Documentary Studio app: Lane A delivers code by git branch, not by a new DB column. ✓
+- **Bake-off coverage:** four lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5, D = Phase 6), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 7; each lane is separately AE-verified in Task 8.2. ✓
+- **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the local `docs/adobe/` mirror as source of truth, the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — Lane D's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
+- **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 7.3, both through **one** parser. No schema change to the Documentary Studio app: Lane A delivers code by git branch, not by a new DB column. ✓
 - **Restored dependency:** `chat.py` comes back from the EditFlowAI repo in Task 4.1, including the step that adds `chat` to the cleanup guard's route whitelist — otherwise `tests/test_no_premiere.py` fails the moment it lands. ✓
 - **Grounding:** the shotlist shape, all three archetype rule-sets and every motion limit are quoted from your repo, not invented. The one fabrication risk I deliberately avoided: I did **not** invent props for BAR_CHART/SECTION_TITLE_CARD beyond what the archetype rules imply (`bars`, `accentIndex`, `variant`, `supporting`) — these are flagged in Task 5.2 as the fields the v8 prompt copy must emit. ✓
 - **Placeholders:** none — every step carries runnable code or an exact command. The one intentional "wrong then right" snippet (Task 2.3 Scale expression) is called out explicitly so it can't be pasted by accident. ✓
 - **Naming:** `ef_vis_buildShot / ef_vis_statCounter / ef_vis_barChart / ef_vis_titleCard / ef_vis_countExpr / ef_vis_barGrowExpr / ef_vis_letterExpr / ef_vis_addLetterSelector / ef_vis_ensureFolder / ef_vis_dumpShot / ef_vis_styleText / ef_vis_center`, and `parseShotlist / normalizeShot / clampMotion / MOTION_LIMITS / SUPPORTED_ARCHETYPES / hexToRgb` — used identically throughout. ✓
 - **Resolved blocker:** the chat completion endpoint the repo cleanup removed is restored in Task 4.1 by copying it from EditFlowAI. Phases 1–3 don't depend on it, so Lane C ships even if Lane B stalls.
-- **Risks:** (1) `ADBE Text Range Type2` = 1 for Characters is unverified in AE 2026 — the same enum risk the captions engine carries, and Task 7.1's frame render is what catches it; (2) `ADBE Vector Rect Position` anchoring for baseline bar growth needs the in-AE check in Task 7.1 Step 3; (3) fonts stay at the AE default in v1 — the Style Bible's typeface is a v2 concern; (4) Lane A runs model-written code — mitigated by git-only delivery, the static gate (Task 5.1), a sandbox project, and a manual load click, and the gate's refusal is itself tested in Task 7.2.
+- **Risks:** (1) `ADBE Text Range Type2` = 1 for Characters is unverified in AE 2026 — the same enum risk the captions engine carries, and Task 8.1's frame render is what catches it; (2) `ADBE Vector Rect Position` anchoring for baseline bar growth needs the in-AE check in Task 8.1 Step 3; (3) fonts stay at the AE default in v1 — the Style Bible's typeface is a v2 concern; (4) Lane A runs model-written code — mitigated by git-only delivery, the static gate (Task 5.1), a sandbox project, and a manual load click, and the gate's refusal is itself tested in Task 8.2.
 - **Honest expectation:** Lane C should win on these three archetypes — they're pure arithmetic, which is exactly where code beats a model. The bake-off's real value is finding the archetype where that stops being true, because that's the point where the agent starts paying for itself. If Lane C wins everything, that is a result worth having, not a failure.
 
 **Branch:** `feat/ae-visual-builder`, cut from `main` in EditFlow-AE.

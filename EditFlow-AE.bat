@@ -173,6 +173,41 @@ if (-not (Test-Path $pyExe)) {
 }
 
 # ── Step 4: Connect the panel to After Effects (idempotent) ───────────────
+# ── FFmpeg (bundled, no admin rights needed) ──────────────────────────────
+# Whisper/WhisperX need ffmpeg to read audio. It lives under data/ which is
+# never committed to git, so a fresh clone has none — fetch it once, into the
+# project, without touching the system PATH.
+$ffmpegOk = $false
+try { if (Get-Command ffmpeg -ErrorAction Stop) { $ffmpegOk = $true } } catch {}
+$bundledFfmpeg = Get-ChildItem (Join-Path $InstallDir "data\tools") -Filter "ffmpeg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($bundledFfmpeg) { $ffmpegOk = $true }
+
+if (-not $ffmpegOk) {
+    Write-Step "Getting FFmpeg (one time, ~30 MB)..."
+    $toolsDir = Join-Path $InstallDir "data\tools\ffmpeg-bundled\bin"
+    New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+    $zip = Join-Path $env:TEMP "ffmpeg-essentials.zip"
+    $extract = Join-Path $env:TEMP "ffmpeg-extract-$(Get-Random)"
+    try {
+        Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
+            -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $extract -Force
+        Get-ChildItem $extract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1 |
+            ForEach-Object { Copy-Item $_.FullName $toolsDir -Force }
+        Get-ChildItem $extract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1 |
+            ForEach-Object { Copy-Item $_.FullName $toolsDir -Force }
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path (Join-Path $toolsDir "ffmpeg.exe")) { Write-OK "FFmpeg ready" }
+        else { Write-Warn "FFmpeg extract failed — transcription may not work." }
+    } catch {
+        Write-Warn "Could not download FFmpeg: $_"
+        Write-Warn "Transcription needs it. Install with: winget install Gyan.FFmpeg"
+    }
+} else {
+    Write-OK "FFmpeg found"
+}
+
 Write-Step "Connecting the panel to After Effects..."
 $cepDir = Join-Path $env:APPDATA "Adobe\CEP\extensions"
 $targetDir = Join-Path $cepDir $ExtensionId

@@ -105,7 +105,18 @@ Generated from the code that already works, not hand-written, so it can't drift 
 
 **2. A live probe, not a stale doc** (`ef_vis_probeEnvironment`, Task 5.0). Returns the actual AE version, whether `canAddProperty("ADBE Text Expressible Selector")` is true on *this* install, the installed font list, and the comp settings. The brief carries a `PROBE` block filled from a real run, so the agent is told what this machine can do rather than what Adobe documents.
 
-**3. The local docs mirror stays the source of truth.** `docs/adobe/` is 1.9 MB of official reference. The brief cites file paths into it, and any claim the agent makes about an API can be checked against it before its code is loaded.
+**3. The official Adobe docs, served on demand** (Task 5.0b). The mirror is 1.9 MB across 110 files — roughly 500K tokens, so pasting it is impossible and pasting *part* of it every call is wasteful. Instead we copy the ~14 files an AE builder actually needs (**173 KB total**) into `visual-v8-ae/reference/`, where your app already serves them at `/api/prompts/visual-v8-ae/reference/<file>`. The agent reads a one-page `INDEX.md` routing table and fetches only the page it needs, only when it needs it:
+
+| Agent needs to… | Fetches |
+|---|---|
+| style text (font, size, fill, justification) | `textdocument.md` |
+| find a match name for an animator/selector | `matchnames-textlayer.md` |
+| build shape layers (rects, fills, strokes) | `matchnames-shapelayer.md` |
+| create/size a comp, add layers | `compitem.md` |
+| set a value, add a property, attach an expression | `property.md`, `propertygroup.md` |
+| write an expression (time, linear, ease, textIndex) | `expression-language.md` |
+
+**Precedence rule, stated in the brief:** when the Adobe docs and our brief disagree, **the brief wins** — Adobe documents the API in general, the brief documents what actually ran on this machine. `docs/adobe/` remains the local source of truth for *us*: any API claim in the agent's pushed code can be checked against it before the code is allowed to run.
 
 **4. The error round-trip.** When gated code fails in AE, the exact `ERROR:` string, the failing function, and a rendered frame go **back to the agent** with the brief attached, and it gets one correction attempt (Task 5.4). Most model errors in ES3 are single-token — `const` instead of `var` — and are fixed instantly once the model sees the actual message instead of guessing.
 
@@ -1199,6 +1210,92 @@ console.log('MATCHNAMES.md:', matchnames.size, 'verified names');
 
 - [ ] **Step 4: Run the generator, commit the brief** — `node tools/build-agent-brief.js`, then commit `docs(agent): generated AE environment brief + live capability probe`.
 
+### Task 5.0b: Ship the Adobe reference to the web agent
+
+**Files:** Create `tools/build-agent-reference.js`; output into the Content Factory repo at `prompts/visual-v8-ae/reference/`.
+
+The web agent cannot read `docs/adobe/` — it's on the other side of a tunnel. Copy the useful slice into the prompt folder the app already serves.
+
+- [ ] **Step 1: Write the copier** — `tools/build-agent-reference.js`:
+
+```js
+/* Copy the slice of the Adobe mirror an AE builder agent actually needs
+   into the v8 prompt folder, where the Documentary Studio app serves it at
+   /api/prompts/visual-v8-ae/reference/<file>.
+   The full mirror is 1.9MB (~500K tokens) — this slice is ~173KB, fetched
+   one page at a time. */
+const fs = require('node:fs');
+const path = require('node:path');
+
+const MIRROR = path.resolve(__dirname, '..', 'docs', 'adobe');
+const OUT = process.argv[2];   // .../Content-Prompts-for-AI/prompts/visual-v8-ae/reference
+if (!OUT) { console.error('usage: node tools/build-agent-reference.js <out-dir>'); process.exit(1); }
+
+const FILES = [
+  ['scripting-guide/docs/text/textdocument.md',            'textdocument.md'],
+  ['scripting-guide/docs/layer/textlayer.md',              'textlayer.md'],
+  ['scripting-guide/docs/layer/shapelayer.md',             'shapelayer.md'],
+  ['scripting-guide/docs/layer/layer.md',                  'layer.md'],
+  ['scripting-guide/docs/item/compitem.md',                'compitem.md'],
+  ['scripting-guide/docs/property/property.md',            'property.md'],
+  ['scripting-guide/docs/property/propertygroup.md',       'propertygroup.md'],
+  ['scripting-guide/docs/matchnames/layer/textlayer.md',   'matchnames-textlayer.md'],
+  ['scripting-guide/docs/matchnames/layer/shapelayer.md',  'matchnames-shapelayer.md'],
+  ['scripting-guide/docs/other/markervalue.md',            'markervalue.md'],
+  ['scripting-guide/docs/other/keyframeease.md',           'keyframeease.md'],
+  ['scripting-guide/docs/introduction/changelog.md',       'ae-version-changelog.md'],
+];
+
+fs.mkdirSync(OUT, { recursive: true });
+let total = 0, copied = [];
+for (const [src, dest] of FILES) {
+  const from = path.join(MIRROR, src);
+  if (!fs.existsSync(from)) { console.warn('MISSING (skipped):', src); continue; }
+  const bytes = fs.readFileSync(from);
+  fs.writeFileSync(path.join(OUT, dest), bytes);
+  total += bytes.length; copied.push([dest, Math.round(bytes.length / 1024)]);
+}
+console.log(`copied ${copied.length} files, ${Math.round(total / 1024)}KB`);
+```
+
+- [ ] **Step 2: Add the expression pages** — the expression reference uses a different layout. These paths are verified to exist in the mirror; append them to `FILES`:
+
+```js
+  ['expressions/docs/general/interpolation.md',  'expr-interpolation.md'],  // linear(), ease()
+  ['expressions/docs/general/global.md',         'expr-global.md'],         // time, thisLayer, comp()
+  ['expressions/docs/general/time-conversion.md','expr-time.md'],
+  ['expressions/docs/text/sourcetext.md',        'expr-sourcetext.md'],     // textIndex, textTotal
+  ['expressions/docs/layer/properties.md',       'expr-layer-properties.md'],
+```
+
+  The whole `general/` + `text/` set is 116 KB, so taking these five keeps the bundle under ~250 KB.
+
+- [ ] **Step 3: Generate `INDEX.md`** into the same folder — the routing table from the "Stopping the web agent from hallucinating" section above, plus this line at the top:
+
+```markdown
+> Fetch ONE page at a time, only when you need it. If this reference and
+> `KNOWN_FAILURES.md` disagree, KNOWN_FAILURES wins — it describes code that
+> actually ran on this machine; these pages describe the API in general.
+```
+
+- [ ] **Step 4: Run it and check the size**
+
+```bash
+node tools/build-agent-reference.js "G:/Tech/AI Orchestration System/ContentFactory V4 Z.AI/Content-Prompts-for-AI/prompts/visual-v8-ae/reference"
+```
+
+Expected: `copied 17 files, ~250KB`, and no `MISSING` lines. Any `MISSING` means a path changed in the mirror — fix the path, don't drop the file.
+
+- [ ] **Step 5: Verify the app serves them** — with the Documentary Studio app running:
+
+```bash
+curl -s http://localhost:3000/api/prompts/visual-v8-ae/reference/INDEX.md | head -5
+```
+
+Expected: the routing table. If the app serves prompts from its own copy (`content-app/prompts/`), re-run the app's prompt-sync step so the reference folder lands there too.
+
+- [ ] **Step 6: Commit in the Content Factory repo** `feat(prompts): AE scripting reference for the v8 builder agent` — and confirm `git status --short prompts/visual-v7-glm` is still empty.
+
 ### Task 5.1: The static gate for pushed code
 
 **Files:** Create `cep-panel-ae/client/src/lane-web.js`, `tests/lane-web-gate.test.js`.
@@ -1512,7 +1609,7 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 
 - **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
 - **Bake-off coverage:** four lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5, D = Phase 6), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 7; each lane is separately AE-verified in Task 8.2. ✓
-- **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the local `docs/adobe/` mirror as source of truth, the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — Lane D's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
+- **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the Adobe reference served on demand to the web agent (Task 5.0b — the mirror itself is 1.9MB, far too big to paste), the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — Lane D's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
 - **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 7.3, both through **one** parser. No schema change to the Documentary Studio app: Lane A delivers code by git branch, not by a new DB column. ✓
 - **Restored dependency:** `chat.py` comes back from the EditFlowAI repo in Task 4.1, including the step that adds `chat` to the cleanup guard's route whitelist — otherwise `tests/test_no_premiere.py` fails the moment it lands. ✓
 - **Grounding:** the shotlist shape, all three archetype rule-sets and every motion limit are quoted from your repo, not invented. The one fabrication risk I deliberately avoided: I did **not** invent props for BAR_CHART/SECTION_TITLE_CARD beyond what the archetype rules imply (`bars`, `accentIndex`, `variant`, `supporting`) — these are flagged in Task 5.2 as the fields the v8 prompt copy must emit. ✓

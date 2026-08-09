@@ -3,11 +3,17 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Every AE-facing task ends with bridge evidence (CLAUDE.md Rule 10): an `ef_vis_dumpShot` assertion plus a rendered frame from `/api/ae-bridge/frame`. Nothing is reported as working on the strength of code review alone.
 
-**Goal:** Turn a `shotlist.json` from the Content Factory into finished After Effects comps — one comp per shot — for the three archetypes that carry most of a documentary: `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`.
+**Goal:** Turn a `shotlist.json` from the Content Factory into finished After Effects comps — one comp per shot — for the three archetypes that carry most of a documentary (`STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`), **and let three different builders compete at it so you can measure which one you actually want.**
 
-**Architecture:** A **deterministic compiler**, not a prompt. The panel parses `shotlist.json`, normalises each shot into a strict build spec (pure JS, node-tested), and ExtendScript builds a comp from that spec with native layers and expressions. An LLM is available only to *fill gaps* in a malformed shot (missing title, no accent colour) — it never computes geometry or timing. Everything lands in one AE project so you can arrange and render normally.
+**Architecture:** One shared substrate — a strict spec model, a set of AE primitives, and a verification harness — with **three interchangeable lanes** feeding it:
 
-**Tech Stack:** CEP panel (vanilla ES modules), ExtendScript ES3, node:test, the existing agent bridge for verification, Ollama via the provider layer already in the backend.
+- **Lane C — Deterministic compiler (the control).** Pure code turns a shot into a build spec. No AI. This is the baseline every other lane has to beat.
+- **Lane B — Local agent.** The Ollama model inside the panel translates a shot spec into calls to the AE primitives. Small model, constrained vocabulary, runs offline.
+- **Lane A — Web agent.** A cloud model (the one already wired into your Documentary Studio app) writes actual ExtendScript builder code, pushes it to a branch in this repo, and the panel loads and runs it behind a review gate.
+
+All three take the **same** `shotlist.json` and produce comps in the **same** AE project, then get scored by the **same** harness — build success, spec fidelity, archetype-rule compliance, and rendered frames you eyeball side by side.
+
+**Tech Stack:** CEP panel (vanilla ES modules), ExtendScript ES3, node:test, the existing agent bridge for verification, Ollama via the backend's provider layer, and the Documentary Studio app's tunnel API for Lane A.
 
 ---
 
@@ -62,6 +68,51 @@
 | Highlight sweep | 1.8–2.2 s |
 | Grain opacity | 0.03–0.07 |
 
+## The bake-off: what "better" means
+
+A comparison without a scorecard is just vibes, and vibes can't tell you whether an agent beat plain code. Every lane is scored on the same five things, four of them automatic:
+
+| Measure | How it's checked | Why it matters |
+|---|---|---|
+| **Built at all** | `ef_vis_buildShot` returned a comp, no `ERROR:` | A lane that errors on 1 shot in 5 is unusable regardless of how pretty the other 4 are |
+| **Spec fidelity** | `ef_vis_dumpShot` vs the spec: final number, bar count, letter count, comp duration | Catches "looks fine, wrong data" — the failure mode that ruins a documentary |
+| **Rule compliance** | Automated frame checks: title-card letters partially in at t=0.3s (stagger, not block fade); bar chart shows axis before bars; counter reads 0 at t=0 | These are *your* archetype rules from v7, enforced rather than hoped for |
+| **Looks right** | 3 rendered frames per shot per lane, shown side by side | The part only you can judge |
+| **Cost + time** | Seconds to build, tokens/credits spent | A lane that's 2% better and 40× slower is not better |
+
+**The control group is the point.** If Lane C (no AI at all) ties Lane A and Lane B, that's the answer — use the compiler and stop paying for tokens. I expect Lane C to win on the three archetypes in this plan precisely *because* they're deterministic, and to lose the moment you add an archetype nobody wrote a builder for. That's the real question the bake-off answers: **where does the agent start earning its keep?**
+
+## Merging the two systems
+
+Two codebases have to meet without either owning the other:
+
+```
+Documentary Studio app                     EditFlow-AE
+(Next.js, port 3000, tunnel)               (FastAPI 8765 + AE panel)
+  projects / scripts / research              spec model + AE primitives
+  visual plans  ── shotsJson ──────────────► panel loads shotlist
+                ── aeCode (Lane A) ────────► panel loads generated builder
+                ◄── results.json ──────────  scorecard back to the plan
+```
+
+**The contract is one file: `shotlist.json`.** Everything else is optional convenience.
+
+- **Transport, v1: a file.** You export the shotlist from the app, load it in the panel. Zero coupling, works with the tunnel down, and it's how you'll debug when something's wrong.
+- **Transport, v2: the tunnel.** The panel can pull `GET <tunnel>/api/projects/<id>/visual-plans` directly (Task 6.1). Same parser either way.
+- **Lane A's code path.** Your visual-plan record already has a `remotionCode` field — proof this pattern works. We do **not** add a DB column: Lane A pushes its generated builder to a **git branch** in EditFlow-AE (`agent/lane-a/<plan-id>`), which means it's reviewable, diffable, and revertible before a single line runs in your AE.
+- **Results flow back** as `results.json` (the scorecard), which you can attach to the plan or just read in the panel.
+
+**Prompt rule, unchanged:** the v7 folder is never edited. Lane A's instructions live in the `visual-v8-ae` copy (Task 5.2).
+
+## Safety: Lane A executes AI-written code
+
+Lane A means running ExtendScript that a cloud model wrote, inside After Effects, on a machine with your projects open. That deserves real guard rails, not optimism:
+
+1. **Arrives by git, never by HTTP.** No endpoint accepts code. You `git pull` a branch and can read the diff first.
+2. **Static gate before it runs** (Task 4.3): the file must define only `ef_lane_a_*` functions, and must not contain `app.project.close`, `.remove()` outside its own comp, `File(`, `Folder(`, `system.callSystem`, `$.evalFile`, or `app.executeCommand`. Fails the gate → never loaded.
+3. **Sandbox project.** Bake-off runs happen in a dedicated AE project (`EditFlow Bakeoff.aep`), never your working file.
+4. **Explicit human load.** The panel shows the diff summary and requires a click. Nothing auto-runs on `git pull`.
+
 ## Design decisions
 
 - **The LLM does not do maths.** Bar heights, letter stagger and count-up curves are arithmetic; an LLM would make them non-deterministic and unverifiable. The compiler is pure JS. The LLM (Task 4.1) only fills *missing* props on a malformed shot and picks a signature variant — behind an explicit button, off by default.
@@ -82,6 +133,13 @@
 | `tests/fixtures/shotlist-sample.json` | NEW. A 3-shot fixture, one per archetype. |
 | `docs/ae-visual-shots.md` | NEW. How to use it + in-AE checklist. |
 | `prompts/visual-v8-ae/` (Content Factory repo) | NEW COPY, only if prompts need changes (Task 5.2). |
+| `cep-panel-ae/client/src/lane-local.js` | NEW. Lane B: prompt + parse + validate for the local Ollama translator. |
+| `cep-panel-ae/client/src/lane-web.js` | NEW. Lane A: load a pushed builder, run the static gate, hand it to AE. |
+| `cep-panel-ae/client/src/bakeoff.js` | NEW. Runs all lanes over one shotlist, collects the scorecard. |
+| `cep-panel-ae/extendscript/lane_a_loader.jsx` | NEW. Loads a gated Lane-A builder file inside AE and calls it. |
+| `backend/routes/chat.py` | RESTORED from the EditFlowAI repo (Task 4.1) — Lane B needs a completion endpoint. |
+| `tests/lane-local.test.js`, `tests/lane-web-gate.test.js`, `tests/bakeoff.test.js` | NEW. Prompt/parse, the static gate, and scoring — all pure, node-tested. |
+| `docs/ae-visual-bakeoff.md` | NEW. How to run the comparison and read the scorecard. |
 
 ---
 
@@ -905,41 +963,327 @@ Expected: **no output** (zero changes to either file).
 - [ ] **Step 4: Browser-rig check** — open `http://127.0.0.1:8765/panel-ae/cep-loader.html`, click 🎬, paste `tests/fixtures/shotlist-sample.json`, confirm 3 rows render with the right archetypes and durations, and that Build reports the expected "CSInterface not available" error outside AE.
 - [ ] **Step 5: Commit** `feat(visuals): 🎬 panel entry point (3 added lines in main.js)`.
 
-## Phase 4 — The agent (gap-filling only)
+## Phase 4 — Lane B: the local agent
 
-### Task 4.1: LLM repair for malformed shots
+### Task 4.1: Restore the chat endpoint
 
-**Files:** Modify `visuals-view.js`; no backend change (uses the existing `/api/providers` + Ollama layer).
+**Files:** Copy `backend/routes/chat.py` from the **EditFlowAI** repo; modify `backend/main.py`; create `tests/unit/test_chat_route.py`.
 
-- [ ] **Step 1: Scope it honestly.** The LLM is asked one question only: *given this shot's `scriptLine` and `qaRisk`, supply the missing props* — as JSON matching the archetype's required fields. It never sees pixel maths. The response is fed back through `normalizeShot`, so an invented field simply fails validation and is reported.
+The repo cleanup deleted `chat.py` (only the WebSocket survived). It still exists in EditFlowAI at `backend/routes/chat.py` with `POST /chat/message`.
 
-- [ ] **Step 2: Implement** a "✨ Fix missing props" button that appears **only** on rows that failed validation:
+- [ ] **Step 1: Copy it in**
+
+```bash
+cp "G:/Tech/AI Orchestration System/AI Editing/EditFlowAI/backend/routes/chat.py" \
+   "G:/Tech/AI Orchestration System/AI Editing/EditFlow-AE/backend/routes/chat.py"
+```
+
+- [ ] **Step 2: Trim it to what Lane B needs.** Delete `POST /session/new` and any handler that imports a service this repo no longer has. Keep `POST /chat/message`. Verify with:
+
+```bash
+python -c "import ast,io; ast.parse(io.open('backend/routes/chat.py',encoding='utf-8-sig').read()); print('parses')"
+grep -n "^from\|^import" backend/routes/chat.py
+```
+
+Every `from ..services.X` it names must exist in `backend/services/`. If one doesn't (e.g. `chat_engine`), replace that call with a direct `provider_service.chat(...)` call — `provider_service` was deliberately kept in the cleanup for exactly this.
+
+- [ ] **Step 3: Register it** in `backend/main.py`:
+
+```python
+from .routes import chat, diag, models_routes, providers, subtitles, whisper_admin, ws
+...
+app.include_router(chat.router, prefix="/api")
+```
+
+- [ ] **Step 4: Update the cleanup guard** — `tests/test_no_premiere.py` has an `allowed` route whitelist. Add `"chat"` to it, or the guard fails.
+
+- [ ] **Step 5: Write the test**
+
+```python
+"""Lane B is useless if the prompt reaches the model altered — the whole
+point of a local-vs-web comparison is that both see the same instructions."""
+from unittest.mock import AsyncMock, patch
+
+def test_chat_message_passes_the_prompt_through_unchanged(client):
+    with patch("backend.routes.chat.provider_service.chat",
+               new=AsyncMock(return_value={"response": "ok"})) as m:
+        r = client.post("/api/chat/message",
+                        json={"messages": [{"role": "user", "content": "BUILD SPEC X"}]})
+    assert r.status_code == 200
+    sent = m.await_args.args[0] if m.await_args.args else m.await_args.kwargs["messages"]
+    assert sent[-1]["content"] == "BUILD SPEC X"
+```
+
+- [ ] **Step 6: Run** `python -m pytest tests -q` → all pass. **Commit** `feat(backend): restore chat completion endpoint for the local agent lane`.
+
+### Task 4.2: Lane B — local model translates a shot into primitive calls
+
+**Files:** Create `cep-panel-ae/client/src/lane-local.js`, `tests/lane-local.test.js`.
+
+The local model does **not** write ExtendScript. It emits a JSON "build script": an ordered list of calls to the primitives Phase 2 already built. A small model can do that reliably; it cannot write correct ES3.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```js
-async function repairShot(rawShot, errorMessage) {
-  const prompt = [
-    'You are completing a shot spec for a documentary visual.',
-    'Return ONLY a JSON object for the "props" field. No prose.',
-    `Archetype: ${rawShot.archetype}`,
-    `Narration: ${rawShot.scriptLine || ''}`,
-    `Validation error: ${errorMessage}`,
-    'Required for STAT_COUNTER: value (number), title (string).',
-    'Required for BAR_CHART: bars (array of {label, value}).',
-    'Required for SECTION_TITLE_CARD: title (string).',
-    `Current props: ${JSON.stringify(rawShot.props || {})}`,
-  ].join('\n');
-  const resp = await apiPost('/api/chat', { messages: [{ role: 'user', content: prompt }] });
-  return JSON.parse(String(resp.response).match(/\{[\s\S]*\}/)[0]);
+test('a valid build script passes and keeps call order', () => {
+  const out = L.parseBuildScript(JSON.stringify({ calls: [
+    { fn: 'text', args: { content: 'THE MONEY TRAIL', size: 0.11, y: 0.5 } },
+    { fn: 'letterStagger', args: { stagger: 0.05, variant: 'slide_up' } },
+  ] }));
+  assert.equal(out.errors.length, 0);
+  assert.deepEqual(out.calls.map((c) => c.fn), ['text', 'letterStagger']);
+});
+
+test('a call the primitives do not define is rejected, not passed to AE', () => {
+  // the whole safety model: the model can only compose a fixed vocabulary
+  const out = L.parseBuildScript(JSON.stringify({ calls: [
+    { fn: 'app.project.close', args: {} },
+  ] }));
+  assert.equal(out.calls.length, 0);
+  assert.match(out.errors[0], /unknown primitive/i);
+});
+
+test('out-of-range motion values are clamped, not obeyed', () => {
+  const out = L.parseBuildScript(JSON.stringify({ calls: [
+    { fn: 'letterStagger', args: { stagger: 5.0, variant: 'slide_up' } },
+  ] }));
+  assert.equal(out.calls[0].args.stagger, 0.10, 'clamped to the v7 safe band');
+});
+
+test('prose around the JSON is tolerated (models add preambles)', () => {
+  const out = L.parseBuildScript('Sure! Here you go:\n```json\n{"calls":[]}\n```');
+  assert.equal(out.errors.length, 0);
+});
+```
+
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement**
+
+```js
+/** The ONLY functions a local model may call. Anything else is rejected
+    before it reaches AE — this list is the sandbox. */
+export const PRIMITIVES = {
+  text:          ['content', 'size', 'x', 'y', 'color'],
+  countUp:       ['from', 'to', 'dur', 'prefix', 'suffix', 'x', 'y', 'size'],
+  bar:           ['index', 'value', 'maxValue', 'label', 'accent'],
+  axis:          [],
+  letterStagger: ['stagger', 'variant'],
+};
+
+const CLAMPED = { stagger: 'letterStagger', dur: 'statCountUp' };
+
+export function parseBuildScript(raw) {
+  const out = { calls: [], errors: [] };
+  let parsed;
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);      // tolerate prose/fences
+    parsed = JSON.parse(m ? m[0] : raw);
+  } catch (e) {
+    out.errors.push('model did not return JSON: ' + String(e.message || e));
+    return out;
+  }
+  for (const call of (parsed.calls || [])) {
+    const allowed = PRIMITIVES[call.fn];
+    if (!allowed) { out.errors.push(`unknown primitive: ${call.fn}`); continue; }
+    const args = {};
+    for (const k of Object.keys(call.args || {})) {
+      if (!allowed.includes(k)) continue;             // drop unknown args silently
+      args[k] = CLAMPED[k] ? clampMotion(CLAMPED[k], call.args[k]) : call.args[k];
+    }
+    out.calls.push({ fn: call.fn, args });
+  }
+  return out;
 }
 ```
 
-  **Blocker to resolve first:** `/api/chat` was deleted in the repo cleanup — only the WebSocket survived. Either (a) add a tiny `POST /api/chat/complete` to `backend/routes/ws.py`'s router that calls `provider_service`, or (b) call Ollama directly from the panel. Pick (a); it keeps provider selection in one place. Write the route with a pytest that mocks `provider_service` and asserts the prompt is passed through unmodified.
+- [ ] **Step 4: Write the prompt builder** (same file) — it hands the model the shot, the archetype rules verbatim from v7, the primitive list, and demands JSON only. Keep it in one exported `buildPrompt(spec)` so Lane A can reuse the identical text (fair comparison).
 
-- [ ] **Step 3: Never auto-apply.** The repaired props populate the row for review; you press Build. Commit `feat(visuals): optional LLM prop repair for malformed shots`.
+- [ ] **Step 5:** Tests PASS. **Commit** `feat(visuals): Lane B — local model composes primitives, never raw code`.
 
-## Phase 5 — Verification and docs
+## Phase 5 — Lane A: the web agent
 
-### Task 5.1: In-AE verification via the bridge
+### Task 5.1: The static gate for pushed code
+
+**Files:** Create `cep-panel-ae/client/src/lane-web.js`, `tests/lane-web-gate.test.js`.
+
+- [ ] **Step 1: Write the failing tests** — the gate is the safety boundary, so it gets tested hardest:
+
+```js
+const OK = 'function ef_lane_a_shot01(comp, spec) { return true; }';
+
+test('a well-formed builder passes the gate', () => {
+  assert.equal(W.gateCode(OK).ok, true);
+});
+
+test('code touching the project or filesystem is refused', () => {
+  for (const bad of [
+    'function ef_lane_a_x(){ app.project.close(); }',
+    'function ef_lane_a_x(){ new File("C:/x.txt").remove(); }',
+    'function ef_lane_a_x(){ system.callSystem("cmd /c del *"); }',
+    'function ef_lane_a_x(){ $.evalFile("other.jsx"); }',
+    'function ef_lane_a_x(){ app.executeCommand(2); }',
+  ]) {
+    const r = W.gateCode(bad);
+    assert.equal(r.ok, false, bad);
+    assert.ok(r.reason.length > 0);
+  }
+});
+
+test('functions outside the ef_lane_a_ namespace are refused', () => {
+  const r = W.gateCode('function ef_createCaptions(x){ }');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /namespace/i);
+});
+```
+
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement**
+
+```js
+/* Refused outright. Lane A builds comps; it never touches projects, disk,
+   the caption engine, or the app itself. */
+const FORBIDDEN = [
+  /app\.project\.close/, /app\.quit/, /app\.executeCommand/,
+  /\bnew\s+File\b/, /\bnew\s+Folder\b/, /system\.callSystem/,
+  /\$\.evalFile/, /\.saveAs\b/, /app\.project\.save/,
+];
+
+export function gateCode(src) {
+  const text = String(src || '');
+  for (const rx of FORBIDDEN) {
+    if (rx.test(text)) return { ok: false, reason: `forbidden call: ${rx}` };
+  }
+  const defined = [...text.matchAll(/function\s+([A-Za-z0-9_$]+)/g)].map((m) => m[1]);
+  if (defined.length === 0) return { ok: false, reason: 'defines no functions' };
+  const stray = defined.filter((n) => !n.startsWith('ef_lane_a_'));
+  if (stray.length) return { ok: false, reason: `namespace violation: ${stray.join(', ')}` };
+  return { ok: true, reason: '', functions: defined };
+}
+```
+
+- [ ] **Step 4:** Tests PASS. **Commit** `feat(visuals): Lane A static gate — refuse unsafe generated code`.
+
+### Task 5.2: Load and run a gated Lane-A builder
+
+**Files:** Create `cep-panel-ae/extendscript/lane_a_loader.jsx`; modify `lane-web.js`.
+
+- [ ] **Step 1: The loader** — writes nothing to disk; the panel passes the already-gated source as a string and AE `eval`s it inside a function scope, then calls it:
+
+```js
+/* Runs a gated Lane-A builder. The panel has ALREADY passed the source
+   through gateCode(); this is the second line of defence, not the first. */
+function ef_lane_a_run(jsonStr) {
+    var started = false;
+    try {
+        var cfg = eval("(" + jsonStr + ")");
+        if (!cfg.src || !cfg.fn || cfg.fn.indexOf("ef_lane_a_") !== 0) {
+            return ef_vis_err("lane A: bad function name");
+        }
+        var comp = ef_vis_findComp(cfg.compName);
+        if (!comp) return ef_vis_err("lane A: comp not found: " + cfg.compName);
+        app.beginUndoGroup("EditFlow: Lane A " + cfg.fn);
+        started = true;
+        eval(cfg.src);                       // defines ef_lane_a_*
+        var out = this[cfg.fn](comp, cfg.spec);
+        app.endUndoGroup();
+        return ef_json({ ran: cfg.fn, ok: !!out, layers: comp.numLayers });
+    } catch (e) {
+        if (started) { try { app.endUndoGroup(); } catch (_) {} }
+        return ef_vis_err("lane A run: " + e.toString());
+    }
+}
+```
+
+- [ ] **Step 2: The panel side** — `loadLaneABuilder(branch)`: reads the pushed file from the checked-out branch, runs `gateCode`, shows you the function list and a diff summary, and only builds after you click. Nothing auto-runs.
+
+- [ ] **Step 3: Commit** `feat(visuals): Lane A loader with human review gate`.
+
+### Task 5.3: The Lane A instruction file
+
+**Files:** In the Content Factory repo, inside the **copy** only.
+
+- [ ] **Step 1: Copy the folder** (never edit v7):
+
+```bash
+cd "G:/Tech/AI Orchestration System/ContentFactory V4 Z.AI/Content-Prompts-for-AI/prompts"
+cp -r visual-v7-glm visual-v8-ae
+```
+
+- [ ] **Step 2: Add `visual-v8-ae/v8/agent_ae_builder.md`** telling the web agent: the archetype rules (already in the copied folder), the AE primitives available, the `ef_lane_a_*` namespace rule, the forbidden-call list from Task 5.1, that it must push to branch `agent/lane-a/<plan-id>` in EditFlow-AE, and that ExtendScript is **ES3** — no `let`, `const`, arrow functions, or `toLocaleString`.
+- [ ] **Step 3: Verify v7 untouched** — `git status --short prompts/visual-v7-glm` → no output.
+- [ ] **Step 4: Commit in that repo** `feat(prompts): visual-v8-ae lane for the AE builder agent (v7 unchanged)`.
+
+## Phase 6 — The scorecard
+
+### Task 6.1: Run every lane over the same shotlist
+
+**Files:** Create `cep-panel-ae/client/src/bakeoff.js`, `tests/bakeoff.test.js`.
+
+- [ ] **Step 1: Write the failing tests** (scoring is pure — no AE needed):
+
+```js
+test('a lane that errors on a shot scores 0 for that shot, not a crash', () => {
+  const s = B.scoreShot({ spec: { id: 's1', archetype: 'STAT_COUNTER', value: 100 },
+                          result: { error: 'buildShot: bad property' }, dump: null });
+  assert.equal(s.built, false);
+  assert.equal(s.fidelity, 0);
+  assert.match(s.notes[0], /bad property/);
+});
+
+test('fidelity compares the DUMP to the SPEC, not the lane\'s own claim', () => {
+  // a lane reporting success while building the wrong number must score 0
+  const s = B.scoreShot({
+    spec: { id: 's1', archetype: 'STAT_COUNTER', value: 1500000000, duration: 5 },
+    result: { comp: 's1_STAT_COUNTER' },
+    dump: { duration: 5, layers: [{ name: 'Value', text: '1,400,000,000' }] },
+  });
+  assert.equal(s.fidelity, 0, 'wrong final number must fail fidelity');
+});
+
+test('scoreboard totals per lane and names a winner only on a real margin', () => {
+  const board = B.scoreboard({
+    laneC: [{ built: true, fidelity: 1, rules: 1, ms: 900 }],
+    laneB: [{ built: true, fidelity: 1, rules: 1, ms: 8000 }],
+  });
+  assert.equal(board.winner, 'laneC', 'tie on quality → faster lane wins');
+  const tie = B.scoreboard({ laneC: [{ built: true, fidelity: 1, rules: 1, ms: 1000 }],
+                             laneB: [{ built: true, fidelity: 1, rules: 1, ms: 1050 }] });
+  assert.equal(tie.winner, 'tie', 'a 5% time difference is not a winner');
+});
+```
+
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement** `scoreShot` (built / fidelity / rules / ms, with `notes[]`) and `scoreboard` (per-lane totals; winner only when quality differs or time differs by >25%).
+
+- [ ] **Step 4: The runner** — `runBakeoff(shotlist, lanes)` builds every shot in every enabled lane into the sandbox project, calls `ef_vis_dumpShot` after each, renders 3 frames per shot per lane via `/api/ae-bridge/frame`, and writes `results.json`:
+
+```json
+{ "shotlist": "sample", "ranAt": "2026-07-25T10:00:00Z",
+  "lanes": { "laneC": { "built": 3, "fidelity": 1.0, "rules": 1.0, "ms": 2700 },
+             "laneB": { "built": 3, "fidelity": 1.0, "rules": 0.67, "ms": 24000 },
+             "laneA": { "built": 2, "fidelity": 1.0, "rules": 1.0, "ms": 41000 } },
+  "winner": "laneC",
+  "frames": { "laneC": ["shot_01@1.5s.png", "..."] } }
+```
+
+- [ ] **Step 5: Commit** `feat(visuals): bake-off runner + scorecard`.
+
+### Task 6.2: The comparison view
+
+**Files:** Modify `visuals-view.js`.
+
+- [ ] **Step 1:** Add a "Compare lanes" panel: checkboxes for which lanes to run, a Run button, and a results grid — one row per shot, one column per lane, each cell showing the rendered frame plus ✅/❌ for built / fidelity / rules and the time taken. Below it, the scoreboard and the named winner.
+- [ ] **Step 2:** A "Keep this one" button per row copies the winning lane's comp into your working project and deletes the others' — so the bake-off ends with a usable result, not just a report.
+- [ ] **Step 3: Commit** `feat(visuals): side-by-side lane comparison in the panel`.
+
+### Task 6.3: Pull the shotlist straight from the app (optional)
+
+**Files:** Modify `visuals-view.js`.
+
+- [ ] **Step 1:** Add a tunnel-URL field. `GET <url>/api/tunnel/status` to check it's live, `GET <url>/api/projects` to pick a project, `GET <url>/api/projects/<id>/visual-plans` to list plans, then parse `shotsJson` with the **same** `parseShotlist` used for files — no second code path.
+- [ ] **Step 2:** Verify against a running Documentary Studio app; if the tunnel is down the field shows the error and the file loader still works.
+- [ ] **Step 3: Commit** `feat(visuals): load a shotlist directly from the Documentary Studio tunnel`.
+
+## Phase 7 — Verification and docs
+
+### Task 7.1: In-AE verification via the bridge
 
 - [ ] **Step 1:** With the backend running with `EDITFLOW_AGENT_BRIDGE=1` and AE open, build the 3 fixture shots through the panel, then:
 
@@ -959,37 +1303,33 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 - [ ] **Step 3:** Repeat for `shot_02_BAR_CHART` (axis at 0.3 s, bars mid-rise at 1.0 s, labels present at 2.5 s) and `shot_03_SECTION_TITLE_CARD` (partial letters at 0.3 s — proof of stagger, not a block fade).
 - [ ] **Step 4: Commit** the evidence summary in the message: `test(visuals): AE-verified via bridge — dumps + frames for all 3 archetypes`.
 
-### Task 5.2: Prompt lane — copy, never edit
+### Task 7.2: Verify each lane in AE, not just the compiler
 
-**Files:** In the Content Factory repo only, and only if needed.
+- [ ] **Step 1:** Repeat Task 7.1's dump-and-render checks for **Lane B** and **Lane A** on the same 3 fixture shots, into the sandbox project (`EditFlow Bakeoff.aep`).
+- [ ] **Step 2:** Confirm the Lane A gate actually bites: hand `loadLaneABuilder` a builder containing `app.project.close()` and assert the panel refuses it and never reaches AE.
+- [ ] **Step 3: Commit** `test(visuals): all three lanes AE-verified + gate refusal proven`.
 
-- [ ] **Step 1:** If the planner needs to emit an AE lane, **copy** the whole folder:
+### Task 7.3: Documentation
 
-```bash
-cd "G:/Tech/AI Orchestration System/ContentFactory V4 Z.AI/Content-Prompts-for-AI/prompts"
-cp -r visual-v7-glm visual-v8-ae
-```
+**Files:** Create `docs/ae-visual-shots.md` and `docs/ae-visual-bakeoff.md`.
 
-- [ ] **Step 2:** Edit **only** inside `visual-v8-ae/`: add `"tool": "ae_comp"` as an accepted value in the copied `agent_visual_planner.md`, and note that `STAT_COUNTER`, `BAR_CHART` and `SECTION_TITLE_CARD` route to After Effects.
-- [ ] **Step 3: Verify v7 is untouched** — `cd .. && git status --short prompts/visual-v7-glm` → no output.
-- [ ] **Step 4: Commit in that repo** `feat(prompts): visual-v8-ae lane (copy of v7, v7 unchanged)`.
-
-### Task 5.3: Documentation
-
-**Files:** Create `docs/ae-visual-shots.md`.
-
-- [ ] **Step 1: Write it** — what the feature does; how to export `shotlist.json` from the Documentary Studio app; the 🎬 button flow; the supported archetypes and their required props (copy the table from this plan's "Verified inputs"); the in-AE checklist from Task 5.1; and the explicit limitation that `BROLL_VIDEO` and `EMOTIONAL_MOMENT` stay with the generative tools.
-- [ ] **Step 2: Commit** `docs(visuals): how to build Content Factory shots in AE`.
+- [ ] **Step 1: Write `ae-visual-shots.md`** — what the feature does; how to get a `shotlist.json` out of the Documentary Studio app (export a file, or paste the tunnel URL); the 🎬 button flow; the supported archetypes and their required props (copy the table from this plan's "Verified inputs"); the in-AE checklist from Task 7.1; and the explicit limitation that `BROLL_VIDEO` and `EMOTIONAL_MOMENT` stay with the generative tools.
+- [ ] **Step 2: Write `ae-visual-bakeoff.md`** — how to run all three lanes over one shotlist, what each scorecard column means, how to read `results.json`, how to accept a winning comp, and the safety rules for Lane A (git-only delivery, the static gate, the sandbox project, the manual load click).
+- [ ] **Step 3: Commit** `docs(visuals): how to build shots in AE and how to run the lane bake-off`.
 
 ---
 
 ## Self-review
 
-- **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.2 copies and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
+- **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
+- **Bake-off coverage:** three lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 6; each lane is separately AE-verified in Task 7.2. ✓
+- **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 6.3, both through **one** parser. No schema change to the Documentary Studio app: Lane A delivers code by git branch, not by a new DB column. ✓
+- **Restored dependency:** `chat.py` comes back from the EditFlowAI repo in Task 4.1, including the step that adds `chat` to the cleanup guard's route whitelist — otherwise `tests/test_no_premiere.py` fails the moment it lands. ✓
 - **Grounding:** the shotlist shape, all three archetype rule-sets and every motion limit are quoted from your repo, not invented. The one fabrication risk I deliberately avoided: I did **not** invent props for BAR_CHART/SECTION_TITLE_CARD beyond what the archetype rules imply (`bars`, `accentIndex`, `variant`, `supporting`) — these are flagged in Task 5.2 as the fields the v8 prompt copy must emit. ✓
 - **Placeholders:** none — every step carries runnable code or an exact command. The one intentional "wrong then right" snippet (Task 2.3 Scale expression) is called out explicitly so it can't be pasted by accident. ✓
 - **Naming:** `ef_vis_buildShot / ef_vis_statCounter / ef_vis_barChart / ef_vis_titleCard / ef_vis_countExpr / ef_vis_barGrowExpr / ef_vis_letterExpr / ef_vis_addLetterSelector / ef_vis_ensureFolder / ef_vis_dumpShot / ef_vis_styleText / ef_vis_center`, and `parseShotlist / normalizeShot / clampMotion / MOTION_LIMITS / SUPPORTED_ARCHETYPES / hexToRgb` — used identically throughout. ✓
-- **Known blocker, surfaced not buried:** Task 4.1 needs a chat completion endpoint that the repo cleanup removed. Phases 1–3 and 5 do not depend on it, so the feature is fully usable without Phase 4.
-- **Risks:** (1) `ADBE Text Range Type2` = 1 for Characters is unverified in AE 2026 — same enum risk the captions engine carries, and Task 5.1's frame render is what catches it; (2) `ADBE Vector Rect Position` anchoring for baseline growth needs the in-AE check in Task 5.1 Step 3; (3) fonts are left at the AE default in v1 — the Style Bible's typeface is a v2 concern.
+- **Resolved blocker:** the chat completion endpoint the repo cleanup removed is restored in Task 4.1 by copying it from EditFlowAI. Phases 1–3 don't depend on it, so Lane C ships even if Lane B stalls.
+- **Risks:** (1) `ADBE Text Range Type2` = 1 for Characters is unverified in AE 2026 — the same enum risk the captions engine carries, and Task 7.1's frame render is what catches it; (2) `ADBE Vector Rect Position` anchoring for baseline bar growth needs the in-AE check in Task 7.1 Step 3; (3) fonts stay at the AE default in v1 — the Style Bible's typeface is a v2 concern; (4) Lane A runs model-written code — mitigated by git-only delivery, the static gate (Task 5.1), a sandbox project, and a manual load click, and the gate's refusal is itself tested in Task 7.2.
+- **Honest expectation:** Lane C should win on these three archetypes — they're pure arithmetic, which is exactly where code beats a model. The bake-off's real value is finding the archetype where that stops being true, because that's the point where the agent starts paying for itself. If Lane C wins everything, that is a result worth having, not a failure.
 
 **Branch:** `feat/ae-visual-builder`, cut from `main` in EditFlow-AE.

@@ -1496,14 +1496,14 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 
 - [ ] **Step 1:** Repeat Task 8.1's dump-and-render checks for **Lane B** and **Lane A** on the same 3 fixture shots, into the sandbox project (`EditFlow Bakeoff.aep`).
 - [ ] **Step 2:** Confirm the Lane A gate actually bites: hand `loadLaneABuilder` a builder containing `app.project.close()` and assert the panel refuses it and never reaches AE.
-- [ ] **Step 3: Commit** `test(visuals): all three lanes AE-verified + gate refusal proven`.
+- [ ] **Step 3: Commit** `test(visuals): all four lanes AE-verified + gate refusal proven`.
 
 ### Task 8.3: Documentation
 
 **Files:** Create `docs/ae-visual-shots.md` and `docs/ae-visual-bakeoff.md`.
 
 - [ ] **Step 1: Write `ae-visual-shots.md`** — what the feature does; how to get a `shotlist.json` out of the Documentary Studio app (export a file, or paste the tunnel URL); the 🎬 button flow; the supported archetypes and their required props (copy the table from this plan's "Verified inputs"); the in-AE checklist from Task 8.1; and the explicit limitation that `BROLL_VIDEO` and `EMOTIONAL_MOMENT` stay with the generative tools.
-- [ ] **Step 2: Write `ae-visual-bakeoff.md`** — how to run all three lanes over one shotlist, what each scorecard column means, how to read `results.json`, how to accept a winning comp, and the safety rules for Lane A (git-only delivery, the static gate, the sandbox project, the manual load click).
+- [ ] **Step 2: Write `ae-visual-bakeoff.md`** — how to run all four lanes over one shotlist, what each scorecard column means, how to read `results.json`, how to accept a winning comp, and the safety rules for Lane A (git-only delivery, the static gate, the sandbox project, the manual load click).
 - [ ] **Step 3: Commit** `docs(visuals): how to build shots in AE and how to run the lane bake-off`.
 
 ---

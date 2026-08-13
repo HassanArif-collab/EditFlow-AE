@@ -158,19 +158,58 @@ Lane A means running ExtendScript that a cloud model wrote, inside After Effects
 - **The LLM does not do maths.** Bar heights, letter stagger and count-up curves are arithmetic; an LLM would make them non-deterministic and unverifiable. The compiler is pure JS. The LLM (Task 4.1) only fills *missing* props on a malformed shot and picks a signature variant — behind an explicit button, off by default.
 - **Separate namespace `ef_vis_*`.** No collision with the caption engine's `ef_*`, and a grep instantly shows which system owns a function.
 - **Separate jsx file loaded alongside index.jsx.** Honours constraint 1 literally.
-- **One comp per shot, named `<id>_<ARCHETYPE>`**, all inside an AE folder named after the project. You arrange them yourself; nothing auto-renders.
+- **One comp per shot, named `<id>_<ARCHETYPE>`**, all inside an AE folder named after the project.
+
+### Versions, not overwrites (Phase A)
+
+Building a shot **never replaces** the previous build. The project tree is:
+
+```
+EF Visuals/
+  shot_01/           ← folder per shot
+    shot_01 v1       ← first build
+    shot_01 v2       ← rebuild, or a different lane's attempt
+    shot_01 v3
+  shot_02/
+  EF Visuals Master  ← sequences the ACTIVE version of every shot
+```
+
+**This replaces the separate bake-off machinery.** A lane's output is just another version of the same shot, so "compare the lanes" and "try it again a different way" are the same action with the same UI: a version dropdown per shot, a ★ to mark one active, and Delete for the rest. One mechanism, two jobs.
+
+Also: a **Clear All** button that removes the whole `EF Visuals` folder, because "start completely over" must be one click, not manual comp deletion.
+
+### Assets (Phase A)
+
+Shots carry `bgSrc` / `assetNeeded` (e.g. `"port.jpg"`). The panel takes one **assets folder** setting; files are imported **once** into an `EF Assets` footage folder and reused across shots.
+
+A missing asset **never fails the batch**: the shot builds with a visible magenta placeholder solid and is listed under "missing assets" in the results. Twenty-three good shots beat one error dialog.
+
+### Fonts (Phase A)
+
+The caption engine already resolves a PostScript font name and applies it (`ef_styleDoc` sets `td.font = cfg.fontPS`). Visuals reuse that exact path plus the panel's existing font picker; a shot may override with a `font` prop.
+
+Deferring this was wrong in the first draft: `SECTION_TITLE_CARD` is *entirely* typography, so the AE default font makes the archetype useless.
+
+### The master comp (Phase B)
+
+`EF Visuals Master` lays every shot end-to-end in shot order as **nested comp layers**, each trimmed to its `durationInFrames`. Rebuildable at any time from whichever versions are marked active.
+
+Nesting matters: edit a shot comp and the master updates itself. Without this the feature ends with 24 loose comps and no path to a video — the single biggest gap in the first draft.
+
+**Not in v1 (deliberate):** the master does not sync to your voiceover. Durations come from the shotlist. The seam is left open — see "Parked" at the end of this plan.
 
 ## File map
 
 | File | Responsibility |
 |---|---|
-| `cep-panel-ae/client/src/shotlist-model.js` | NEW. Pure: `parseShotlist`, `normalizeShot`, `MOTION_LIMITS`, `clampMotion`, `SUPPORTED_ARCHETYPES`. No DOM, no AE. |
+| `cep-panel-ae/client/src/shotlist-model.js` | NEW. Pure: `parseShotlist`, `normalizeShot`, `MOTION_LIMITS`, `clampMotion`, `SUPPORTED_ARCHETYPES`, `nextVersionName`, `masterOrder`. No DOM, no AE. |
 | `cep-panel-ae/client/src/visuals-view.js` | NEW. The Visuals tab: load shotlist, list shots, Build All / Build One, status. |
 | `cep-panel-ae/extendscript/visuals.jsx` | NEW. `ef_vis_*` builders. `index.jsx` untouched. |
 | `cep-panel-ae/client/src/main.js` | +3 lines (import, button, click handler). |
 | `tests/shotlist-model.test.js` | NEW. Parsing, normalisation, motion clamps. |
 | `tests/visuals-jsx.test.js` | NEW. vm-eval of visuals.jsx + generated expressions. |
 | `tests/fixtures/shotlist-sample.json` | NEW. A 3-shot fixture, one per archetype. |
+| `visuals.jsx` (Phase A/B additions) | `ef_vis_ensureShotFolder`, `ef_vis_nextVersion`, `ef_vis_listVersions`, `ef_vis_setActiveVersion`, `ef_vis_clearAll`, `ef_vis_importAsset`, `ef_vis_placeholderSolid`, `ef_vis_fitText`, `ef_vis_buildMaster`. |
 | `docs/ae-visual-shots.md` | NEW. How to use it + in-AE checklist. |
 | `prompts/visual-v8-ae/` (Content Factory repo) | NEW COPY, only if prompts need changes (Task 5.2). |
 | `cep-panel-ae/client/src/lane-local.js` | NEW. Lane B: prompt + parse + validate for the local Ollama translator. |
@@ -929,6 +968,258 @@ function ef_vis_buildShot(jsonStr) {
 - [ ] **Step 2: Run the full node suite** — `node --test tests/visuals-jsx.test.js tests/shotlist-model.test.js` → all PASS.
 - [ ] **Step 3: Commit** `feat(visuals): buildShot dispatcher — one comp per shot`.
 
+### Task 2.6: Versions — never overwrite a build
+
+**Files:** Modify `visuals.jsx`; add tests to `tests/shotlist-model.test.js` and `tests/visuals-jsx.test.js`.
+
+- [ ] **Step 1: Write the failing pure test** (naming is pure logic, so it's node-testable):
+
+```js
+test('nextVersionName counts up from what already exists', () => {
+  assert.equal(M.nextVersionName('shot_01', []), 'shot_01 v1');
+  assert.equal(M.nextVersionName('shot_01', ['shot_01 v1']), 'shot_01 v2');
+  // gaps and out-of-order input must not reuse a name
+  assert.equal(M.nextVersionName('shot_01', ['shot_01 v3', 'shot_01 v1']), 'shot_01 v4');
+});
+
+test('nextVersionName ignores other shots entirely', () => {
+  assert.equal(M.nextVersionName('shot_02', ['shot_01 v1', 'shot_01 v2']), 'shot_02 v1');
+});
+```
+
+- [ ] **Step 2: Run** `node --test tests/shotlist-model.test.js` → FAIL. **Step 3: Implement**
+
+```js
+/** Next free version name for a shot. Builds NEVER overwrite: a rebuild —
+    or another lane's attempt — becomes v2, v3, … so you can compare and
+    keep the one you want. */
+export function nextVersionName(shotId, existingNames) {
+  let max = 0;
+  const rx = new RegExp('^' + shotId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' v(\\d+)$');
+  for (const name of existingNames || []) {
+    const m = rx.exec(String(name));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${shotId} v${max + 1}`;
+}
+```
+
+- [ ] **Step 4: The AE side** — add to `visuals.jsx`:
+
+```js
+/* Folder per shot inside EF Visuals; created on demand. */
+function ef_vis_ensureShotFolder(shotId) {
+    var root = ef_vis_ensureFolder("EF Visuals", app.project.rootFolder);
+    return ef_vis_ensureFolder(shotId, root);
+}
+
+function ef_vis_listVersions(shotId) {
+    var folder = ef_vis_ensureShotFolder(shotId), names = [];
+    for (var i = 1; i <= folder.numItems; i++) {
+        if (folder.item(i) instanceof CompItem) names.push(String(folder.item(i).name));
+    }
+    return names;
+}
+
+/* Marked with a leading star so the master build knows which to use.
+   Exactly one active version per shot. */
+function ef_vis_setActiveVersion(shotId, versionName) {
+    var folder = ef_vis_ensureShotFolder(shotId), found = false;
+    for (var i = 1; i <= folder.numItems; i++) {
+        var it = folder.item(i);
+        if (!(it instanceof CompItem)) continue;
+        var plain = String(it.name).replace(/^★ /, "");
+        it.name = (plain === versionName) ? ("★ " + plain) : plain;
+        if (plain === versionName) found = true;
+    }
+    return found;
+}
+
+function ef_vis_activeVersionComp(shotId) {
+    var folder = ef_vis_ensureShotFolder(shotId), first = null;
+    for (var i = 1; i <= folder.numItems; i++) {
+        var it = folder.item(i);
+        if (!(it instanceof CompItem)) continue;
+        if (String(it.name).indexOf("★ ") === 0) return it;
+        if (!first) first = it;
+    }
+    return first;   // nothing marked → the first build is active
+}
+
+/* One click back to nothing. */
+function ef_vis_clearAll() {
+    try {
+        var root = null;
+        for (var i = 1; i <= app.project.rootFolder.numItems; i++) {
+            var it = app.project.rootFolder.item(i);
+            if (it instanceof FolderItem && it.name === "EF Visuals") { root = it; break; }
+        }
+        if (!root) return ef_json({ removed: 0 });
+        app.beginUndoGroup("EditFlow: Clear Visuals");
+        var n = root.numItems;
+        root.remove();
+        app.endUndoGroup();
+        return ef_json({ removed: n });
+    } catch (e) { return ef_vis_err("clearAll: " + e.toString()); }
+}
+```
+
+- [ ] **Step 5:** `ef_vis_buildShot` calls `ef_vis_nextVersion` for its comp name and builds inside `ef_vis_ensureShotFolder(spec.id)`. First build of a shot is auto-marked active.
+- [ ] **Step 6: Commit** `feat(visuals): versioned builds — never overwrite, pick the keeper`.
+
+### Task 2.7: Assets — import once, placeholder when missing
+
+**Files:** Modify `visuals.jsx`.
+
+- [ ] **Step 1: Implement**
+
+```js
+/* Import an asset ONCE into an EF Assets folder and reuse it. cfg.assetsDir
+   is the folder the panel points at. Returns null when the file is absent —
+   the caller draws a placeholder instead of failing the batch. */
+function ef_vis_importAsset(fileName, cfg) {
+    if (!fileName) return null;
+    var assets = ef_vis_ensureFolder("EF Assets", app.project.rootFolder);
+    for (var i = 1; i <= assets.numItems; i++) {
+        if (String(assets.item(i).name) === String(fileName)) return assets.item(i);
+    }
+    try {
+        var dir = String(cfg.assetsDir || "").replace(/[\\\/]+$/, "");
+        if (!dir) return null;
+        var f = new File(dir + "/" + fileName);
+        if (!f.exists) return null;
+        var item = app.project.importFile(new ImportOptions(f));
+        item.parentFolder = assets;
+        return item;
+    } catch (e) { return null; }
+}
+
+/* Loud on purpose: a magenta card is impossible to miss in a review pass,
+   and far better than a silent black frame. */
+function ef_vis_placeholderSolid(comp, fileName) {
+    var solid = comp.layers.addSolid([1, 0, 1], "MISSING: " + String(fileName),
+                                     comp.width, comp.height, 1);
+    solid.opacity.setValue(35);
+    return solid;
+}
+```
+
+- [ ] **Step 2:** In `ef_vis_buildShot`, when `spec.bgSrc` is set: import it; on success add it as the bottom layer scaled to fill; on failure call `ef_vis_placeholderSolid` and push `spec.id` onto the returned `missingAssets` array.
+- [ ] **Step 3:** The result JSON gains `"missingAssets": ["shot_01"]` so the panel can list them.
+- [ ] **Step 4: Commit** `feat(visuals): asset import with visible placeholders for missing files`.
+
+### Task 2.8: Fonts and text fitting
+
+**Files:** Modify `visuals.jsx`.
+
+- [ ] **Step 1: Font** — every text layer created by the builders runs through the same style step the captions engine uses:
+
+```js
+/* Same font path as the caption engine (ef_styleDoc): a PostScript name from
+   the panel's picker, overridable per shot. AE's default font makes a title
+   card useless, so this is v1, not v2. */
+function ef_vis_styleText(layer, cfg, spec, sizePx, color) {
+    var tp = layer.property("Source Text"), td = tp.value;
+    td.resetCharStyle();
+    td.fontSize = sizePx;
+    var ps = spec.font || cfg.fontPS;
+    if (ps) { try { td.font = ps; } catch (e) {} }
+    td.applyFill = true;
+    td.fillColor = color || [1, 1, 1];
+    td.justification = ParagraphJustification.CENTER_JUSTIFY;
+    tp.setValue(td);
+}
+```
+
+- [ ] **Step 2: Fitting** — reuse the caption engine's proven approach so a long headline can't run off frame:
+
+```js
+/* Long titles must shrink, not overflow. Mirrors ef_fitToBox in the caption
+   engine — same measure-then-scale idea, same 94% default. */
+function ef_vis_fitText(layer, comp, cfg, atTime) {
+    try {
+        var r = layer.sourceRectAtTime(atTime, false);
+        var maxW = comp.width * ((cfg.boxWidthPct != null ? cfg.boxWidthPct : 94) / 100);
+        if (r.width > maxW) {
+            var s = maxW / r.width * 100;
+            layer.property("Scale").setValue([s, s]);
+            return s / 100;
+        }
+    } catch (e) {}
+    return 1;
+}
+```
+
+- [ ] **Step 3:** Call `ef_vis_fitText` at the end of every builder that creates text (all three archetypes).
+- [ ] **Step 4: Commit** `feat(visuals): shared font handling + text fitting`.
+
+### Task 2.9: The master comp
+
+**Files:** Modify `visuals.jsx`; add a test to `tests/shotlist-model.test.js`.
+
+- [ ] **Step 1: Write the failing pure test** for ordering:
+
+```js
+test('masterOrder sorts by the shotlist order, not by name', () => {
+  const shots = [{ id: 'shot_10' }, { id: 'shot_02' }, { id: 'shot_01' }];
+  // shotlist order is authoritative — "shot_10" must not sort before "shot_02"
+  assert.deepEqual(M.masterOrder(shots).map((s) => s.id), ['shot_10', 'shot_02', 'shot_01']);
+});
+
+test('masterOrder gives each shot its start time from the running total', () => {
+  const shots = [{ id: 'a', durationInFrames: 30 }, { id: 'b', durationInFrames: 45 }];
+  const out = M.masterOrder(shots, 30);          // 30 fps
+  assert.equal(out[0].startTime, 0);
+  assert.equal(out[1].startTime, 1);             // 30 frames = 1s
+  assert.equal(out[1].duration, 1.5);
+});
+```
+
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement** `masterOrder(shots, fps)` returning `{id, startTime, duration}` in shotlist order with a running offset.
+
+- [ ] **Step 4: The AE side**
+
+```js
+/* Lay the ACTIVE version of every shot end-to-end. Nested comps, so editing
+   a shot updates the master automatically. Rebuild any time — the old master
+   is replaced, the shot comps are untouched. */
+function ef_vis_buildMaster(jsonStr) {
+    var started = false;
+    try {
+        var cfg = eval("(" + jsonStr + ")");
+        var root = ef_vis_ensureFolder("EF Visuals", app.project.rootFolder);
+        for (var i = root.numItems; i >= 1; i--) {
+            if (root.item(i) instanceof CompItem &&
+                String(root.item(i).name) === "EF Visuals Master") root.item(i).remove();
+        }
+        app.beginUndoGroup("EditFlow: Build Visuals Master");
+        started = true;
+        var fps = cfg.fps || 30, total = 0, order = cfg.order || [];
+        for (var k = 0; k < order.length; k++) total += order[k].duration;
+        var master = app.project.items.addComp("EF Visuals Master",
+            cfg.width || 1920, cfg.height || 1080, 1, Math.max(total, 1), fps);
+        master.parentFolder = root;
+        var placed = 0, missing = [];
+        for (var j = order.length - 1; j >= 0; j--) {     // reverse: shot 1 ends on top
+            var src = ef_vis_activeVersionComp(order[j].id);
+            if (!src) { missing.push(order[j].id); continue; }
+            var L = master.layers.add(src);
+            L.startTime = order[j].startTime;
+            L.outPoint = order[j].startTime + order[j].duration;
+            placed++;
+        }
+        app.endUndoGroup();
+        return ef_json({ master: master.name, placed: placed, missing: missing,
+                         duration: master.duration });
+    } catch (e) {
+        if (started) { try { app.endUndoGroup(); } catch (_) {} }
+        return ef_vis_err("buildMaster: " + e.toString());
+    }
+}
+```
+
+- [ ] **Step 5: Commit** `feat(visuals): master comp sequencing the active version of every shot`.
+
 ## Phase 3 — The panel tab
 
 ### Task 3.1: Visuals view
@@ -969,6 +1260,16 @@ async function ensureVisualsJsx() {
 ```
 
 - [ ] **Step 3: Commit** `feat(visuals): panel view for loading and building a shotlist`.
+
+### Task 3.1b: Versions, assets and master in the UI
+
+**Files:** Modify `cep-panel-ae/client/src/visuals-view.js`.
+
+- [ ] **Step 1: Per-shot version control.** Each row in the shot table gets a version dropdown listing that shot's builds (`v1`, `v2`, …), a ★ button to mark one active, and a 🗑 to delete a version. Populated from `ef_vis_listVersions`.
+- [ ] **Step 2: Assets folder setting.** One folder picker at the top ("Where your shot images live"), persisted in `SETTINGS_KEYS` as `assetsDir`, passed into every build. Shots whose asset is missing show a ⚠ badge and are listed under the build results.
+- [ ] **Step 3: Master + clear.** Two buttons under the shot table: **🎞 Build Master** (calls `ef_vis_buildMaster` with `masterOrder(shots, fps)`) and **🗑 Clear All Visuals** behind a confirm, since it deletes every version of every shot.
+- [ ] **Step 4: Verify in the browser rig** — the table renders with mock version lists, the confirm fires, and no call reaches AE when CSInterface is absent (errors show cleanly).
+- [ ] **Step 5: Commit** `feat(visuals): version picker, assets folder, master + clear controls`.
 
 ### Task 3.2: Wire it into the panel — exactly 3 added lines
 
@@ -1605,11 +1906,26 @@ curl -o /tmp/stat_mid.png "http://127.0.0.1:8765/api/ae-bridge/frame?t=1.5"
 
 ---
 
+## Parked, with the seam left open
+
+**Voiceover sync — v2, deliberately.** Every shot's screen time should follow the narration: if you slow down explaining something, the visual should hold. Not in v1, by decision.
+
+The seam that makes it cheap later:
+- `duration` is already a per-shot field the compiler reads and the master honours — a future sync pass just rewrites it before `masterOrder` runs.
+- This repo **already transcribes audio to word-level timestamps** (`/api/subtitles/transcribe-mixdown`, WhisperX), so the data source exists.
+- `scriptLine` is already carried on every shot, so matching a shot to its narration span is a text-match, not new infrastructure.
+
+Nothing in Phases A–D blocks it. Building it later means adding one pass, not reworking the pipeline.
+
+**Lane A — v2 (see Phase D).** The code-writing lane is deferred until Lane C + Lane D are proven on one real video. Its plan text stays in this document so nothing is lost.
+
 ## Self-review
 
 - **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
 - **Bake-off coverage:** four lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5, D = Phase 6), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 7; each lane is separately AE-verified in Task 8.2. ✓
 - **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the Adobe reference served on demand to the web agent (Task 5.0b — the mirror itself is 1.9MB, far too big to paste), the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — Lane D's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
+- **Gap audit (2026-07-25), fixes now in the plan:** assets/`bgSrc` were referenced but never imported → Task 2.7 with visible placeholders; fonts were deferred to "v2" despite `SECTION_TITLE_CARD` being pure typography → Task 2.8 reuses the caption engine's font path; there was no path from 24 comps to a video → Task 2.9's master comp; rebuilds had no defined behaviour → Task 2.6 versions everything and adds Clear All; long text could overflow → `ef_vis_fitText`. ✓
+- **Known model constraint:** the only genuinely local model available is `nemotron-3-nano:4b` — the `:cloud` entries in Ollama require a paid plan. Lane B is specified against the 4B model; upgrading to a paid model is a settings change, not a redesign. ✓
 - **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 7.3, both through **one** parser. No schema change to the Documentary Studio app: Lane A delivers code by git branch, not by a new DB column. ✓
 - **Restored dependency:** `chat.py` comes back from the EditFlowAI repo in Task 4.1, including the step that adds `chat` to the cleanup guard's route whitelist — otherwise `tests/test_no_premiere.py` fails the moment it lands. ✓
 - **Grounding:** the shotlist shape, all three archetype rule-sets and every motion limit are quoted from your repo, not invented. The one fabrication risk I deliberately avoided: I did **not** invent props for BAR_CHART/SECTION_TITLE_CARD beyond what the archetype rules imply (`bars`, `accentIndex`, `variant`, `supporting`) — these are flagged in Task 5.2 as the fields the v8 prompt copy must emit. ✓

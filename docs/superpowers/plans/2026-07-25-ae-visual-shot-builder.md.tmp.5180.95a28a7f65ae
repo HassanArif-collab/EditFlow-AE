@@ -96,11 +96,11 @@ A comparison without a scorecard is just vibes, and vibes can't tell you whether
 | **Looks right** | 3 rendered frames per shot per lane, shown side by side | The part only you can judge |
 | **Cost + time** | Seconds to build, tokens/credits spent | A lane that's 2% better and 40× slower is not better |
 
-Two extra columns exist only for the code-writing builders: **first-try rate** (compiled and ran with no retry — the honest measure of whether the environment brief works) and **ES3 failures** (how often the model reached for `const`/arrow/`toLocaleString`, the single most common mistake). GUIDED gets its own column instead: **fields you had to fix by hand** — because its job is saving you time, not beating anyone on fidelity.
+Two extra columns exist only for the agent lanes: **first-try rate** (built correctly with no correction round — the honest measure of whether the environment brief is working) and **rounds used** (GUIDED's think→verify loop, capped at 2).
 
 **The control group is the point.** If BASELINE (no AI at all) ties the agent lanes, that's the answer — use the compiler and stop paying for tokens. I expect BASELINE to win on these three archetypes precisely *because* they're deterministic, and to lose the moment you add an archetype nobody wrote a builder for. That's the real question the bake-off answers: **where does the agent start earning its keep?**
 
-**What I actually expect** (written down so the scoreboard can prove me wrong): BASELINE wins on these three archetypes because they're arithmetic. MENU is the dark horse — if composing primitives is enough, it's the cheapest thing that works. The two coders are the real experiment: a 550B model writing ES3 against a web model writing ES3, same prompt, same docs. And GUIDED isn't competing on quality at all — it's competing on *how much of your time it takes*, which no other builder measures.
+**And GUIDED is the likely overall winner**, because it doesn't ask the model to do the thing models are bad at. BASELINE can't decide that *this* bar deserves the accent or that *this* stat wants a pulse; WEB-CODER can decide it but might also invent a matchname; GUIDED lets the model decide and the compiler build. Structurally it should score BASELINE's fidelity with better creative choices — and the scorecard will say whether that's true or whether I'm flattering my own design.
 
 ## Stopping the web agent from hallucinating
 
@@ -1612,6 +1612,47 @@ Expected: the routing table. If the app serves prompts from its own copy (`conte
 
 - [ ] **Step 6: Commit in the Content Factory repo** `feat(prompts): AE scripting reference for the v8 builder agent` — and confirm `git status --short prompts/visual-v7-glm` is still empty.
 
+### Task 5.0b: LOCAL-CODER — write ExtendScript in the panel, run it immediately
+
+**Files:** Create `cep-panel-ae/client/src/builder-coder.js` (shared by both coders), `tests/builder-coder.test.js`.
+
+Both coders do the **same job**: given a shot spec plus the environment brief, emit ExtendScript that builds the comp. Same prompt, same docs. LOCAL-CODER goes straight to AE (your machine, your model); WEB-CODER arrives by git and passes the gate first.
+
+- [ ] **Step 1: Write the failing tests** — extracting code from a chat reply is where this breaks in practice:
+
+```js
+test('code is pulled out of a fenced reply', () => {
+  const out = C.extractCode('Here you go:\n```javascript\nfunction ef_gen_a(c,s){}\n```\nHope that helps!');
+  assert.equal(out.trim(), 'function ef_gen_a(c,s){}');
+});
+
+test('a bare reply with no fence still yields the code', () => {
+  const out = C.extractCode('function ef_gen_a(comp, spec) { return true; }');
+  assert.match(out, /^function ef_gen_a/);
+});
+
+test('ES5+ tokens are reported before the code ever reaches AE', () => {
+  // ExtendScript is ES3 — const/let/arrow are the #1 model mistake
+  const r = C.checkEs3('const x = () => 1;');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /const|arrow/i);
+  assert.equal(C.checkEs3('var x = 1;').ok, true);
+});
+
+test('the entry function name is discovered, not assumed', () => {
+  assert.equal(C.entryFunction('function ef_gen_shot_01(comp, spec){}'), 'ef_gen_shot_01');
+  assert.equal(C.entryFunction('var q = 1;'), null);
+});
+```
+
+- [ ] **Step 2: Run** `node --test tests/builder-coder.test.js` → FAIL. **Step 3: Implement** `extractCode` (prefer a fenced block, else the whole reply), `checkEs3` (flag `const `, `let `, `=>`, `toLocaleString`, `JSON.`), and `entryFunction` (first `ef_gen_*` declaration).
+
+- [ ] **Step 4: The prompt** — one exported `buildCoderPrompt(spec, brief)` used by **both** coders, containing: the shot spec, the archetype rules verbatim, `ENVIRONMENT.md` + `KNOWN_FAILURES.md` + `MATCHNAMES.md` from the brief, the `ef_gen_<shotId>(comp, spec)` signature it must define, and "ES3 only — `var`, no arrow functions, no `const`/`let`, no `toLocaleString`".
+
+- [ ] **Step 5: The local run path** — `runLocalCoder(spec)`: `POST /api/chat/message` with the model set to the panel's LOCAL-CODER model → `extractCode` → `checkEs3` → if it fails, feed the reason back for **one** retry → `ef_vis_runGenerated`. No git, no gate: it's your machine and your model, and the fast loop is the point.
+
+- [ ] **Step 6:** Every attempt (model, prompt hash, code, pass/fail, error text) is stored with the resulting version so you can see *why* one model beat the other. **Commit** `feat(visuals): LOCAL-CODER writes and runs ExtendScript in one loop`.
+
 ### Task 5.1: The static gate (WEB-CODER only)
 
 **Files:** Create `cep-panel-ae/client/src/builder-coder.js`, `tests/builder-coder-gate.test.js`.
@@ -1732,87 +1773,86 @@ cp -r visual-v7-glm visual-v8-ae
 
 ## Phase 6 — GUIDED: you choose the treatment, the model fills it in
 
-### Task 6.0: GUIDED — your taste, its typing
+### Task 6.0: GUIDED — your treatment, its content
 
 **Files:** Create `cep-panel-ae/client/src/builder-guided.js`, `tests/builder-guided.test.js`.
 
-The inversion that matters: **you are the art director.** You pick the treatment — which title animation, which layout, which accent colour — and the model does the donkey work of filling it with real content: pulling the right number out of the shot, finding and placing the image, writing the label and caption text.
+This is the lane I'd expect to win, and it's cheap because every part already exists: the agent decides, BASELINE builds, the bridge checks.
 
-Nothing creative is delegated. Nothing tedious is manual.
-
-- [ ] **Step 1: Write the failing tests** — the contract is the mirror of the code-writing builders: your choices are locked, the model may only supply content.
+- [ ] **Step 1: Write the failing tests** — the contract is that the agent may only move creative dials, never geometry:
 
 ```js
-test('the treatment you picked is never overridden by the model', () => {
-  const chosen = { variant: 'slide_left', accentColor: '#b8860b', layout: 'centered' };
-  const filled = G.applyFill(
-    { id: 's3', archetype: 'SECTION_TITLE_CARD', treatment: chosen },
-    { variant: 'scale_center', title: 'THE MONEY TRAIL', supporting: 'Act II' });
-  assert.equal(filled.treatment.variant, 'slide_left', 'your choice wins');
-  assert.equal(filled.title, 'THE MONEY TRAIL', 'model content accepted');
-  assert.equal(filled.supporting, 'Act II');
+test('a spec patch may only touch creative fields', () => {
+  const base = { id: 's3', archetype: 'SECTION_TITLE_CARD', title: 'THE MONEY TRAIL',
+                 variant: 'slide_up', stagger: 0.05, duration: 3 };
+  const patched = H.applyPatch(base, { variant: 'scale_center', stagger: 0.08 });
+  assert.equal(patched.variant, 'scale_center');
+  assert.equal(patched.stagger, 0.08);
 });
 
-test('content fields the archetype does not define are dropped', () => {
-  const filled = G.applyFill(
-    { id: 's1', archetype: 'STAT_COUNTER', treatment: { variant: 'centered' } },
-    { title: 'Lost Revenue', value: 1500000000, nonsense: 'x', duration: 90 });
-  assert.equal(filled.title, 'Lost Revenue');
-  assert.equal(filled.value, 1500000000);
-  assert.equal(filled.nonsense, undefined);
-  assert.equal(filled.duration, undefined, 'timing is not the model\'s to set');
+test('a patch trying to change data or geometry is refused', () => {
+  const base = { id: 's1', archetype: 'STAT_COUNTER', value: 1500000000, duration: 5 };
+  const patched = H.applyPatch(base, { value: 999, duration: 90, x: 0.2 });
+  assert.equal(patched.value, 1500000000, 'the NUMBER is not the agent\'s to change');
+  assert.equal(patched.duration, 5, 'timing comes from the shotlist');
+  assert.equal(patched.x, undefined, 'geometry is never patchable');
 });
 
-test('a value that contradicts the shotlist loses to the shotlist', () => {
-  // the shotlist is the source of truth for data that came from your research
-  const filled = G.applyFill(
-    { id: 's1', archetype: 'STAT_COUNTER', value: 1500000000, treatment: {} },
-    { value: 999 });
-  assert.equal(filled.value, 1500000000);
+test('patched motion values still get clamped to the v7 bands', () => {
+  const base = { id: 's3', archetype: 'SECTION_TITLE_CARD', title: 'X', stagger: 0.05 };
+  assert.equal(H.applyPatch(base, { stagger: 0.9 }).stagger, 0.10);
 });
 
-test('an image suggestion must name a file, not describe one', () => {
-  assert.equal(G.applyFill({ id: 's1', archetype: 'STAT_COUNTER', treatment: {} },
-                           { bgSrc: 'port.jpg' }).bgSrc, 'port.jpg');
-  assert.equal(G.applyFill({ id: 's1', archetype: 'STAT_COUNTER', treatment: {} },
-                           { bgSrc: 'a photo of a busy port' }).bgSrc, undefined);
+test('a verdict of "fix" carries a patch; "ok" ends the loop', () => {
+  assert.equal(H.parseVerdict('{"verdict":"ok"}').done, true);
+  const f = H.parseVerdict('{"verdict":"fix","patch":{"variant":"slide_left"},"why":"stagger unclear"}');
+  assert.equal(f.done, false);
+  assert.deepEqual(f.patch, { variant: 'slide_left' });
 });
 ```
 
-- [ ] **Step 2: Run** `node --test tests/builder-guided.test.js` → FAIL. **Step 3: Implement**
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement**
 
 ```js
-/* Content the model MAY supply, per archetype. Everything else — your
-   treatment, the timing, and any value already present in the shotlist —
-   is off limits. This whitelist is why GUIDED cannot quietly change the
-   number your research produced. */
-export const FILLABLE = {
-  SECTION_TITLE_CARD: ['title', 'supporting', 'bgSrc'],
-  STAT_COUNTER: ['title', 'value', 'prefix', 'unit', 'bgSrc'],
-  BAR_CHART: ['bars', 'caption', 'bgSrc'],
+/* The ONLY fields an agent may set. Everything else — values, durations,
+   coordinates — comes from the shotlist or the compiler. This whitelist is
+   why the hybrid lane cannot hallucinate a wrong number onto the screen. */
+export const PATCHABLE = {
+  SECTION_TITLE_CARD: ['variant', 'stagger', 'supporting'],
+  STAT_COUNTER: ['pulse', 'unit'],
+  BAR_CHART: ['accentIndex'],
 };
 
-const FILENAME_RE = /^[\w.\- ]+\.(jpg|jpeg|png|mp4|mov)$/i;
+const CLAMPED = { stagger: 'letterStagger' };
 
-export function applyFill(spec, fill) {
-  const allowed = FILLABLE[spec.archetype] || [];
+export function applyPatch(spec, patch) {
+  const allowed = PATCHABLE[spec.archetype] || [];
   const out = { ...spec };
-  for (const k of Object.keys(fill || {})) {
-    if (!allowed.includes(k)) continue;                    // not the model's field
-    if (spec[k] !== undefined && spec[k] !== null && spec[k] !== '') continue;  // shotlist wins
-    if (k === 'bgSrc' && !FILENAME_RE.test(String(fill[k]))) continue;  // a name, not a wish
-    out[k] = fill[k];
+  for (const k of Object.keys(patch || {})) {
+    if (!allowed.includes(k)) continue;                 // silently refused
+    out[k] = CLAMPED[k] ? clampMotion(CLAMPED[k], patch[k]) : patch[k];
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'accentIndex')) {
+    // accentIndex is patchable but must stay in range
+    const i = Number(patch.accentIndex);
+    out.bars = (spec.bars || []).map((b, n) => ({ ...b, accent: n === i }));
   }
   return out;
 }
+
+export function parseVerdict(raw) {
+  try {
+    const m = String(raw).match(/\{[\s\S]*\}/);
+    const v = JSON.parse(m ? m[0] : raw);
+    return { done: v.verdict === 'ok', patch: v.patch || {}, why: v.why || '' };
+  } catch (e) {
+    return { done: true, patch: {}, why: 'unparseable verdict — accepting build' };
+  }
+}
 ```
 
-- [ ] **Step 4: The treatment picker** (`visuals-view.js`) — per shot, a small set of choices drawn from the v7 approved lists: title variant (`slide up` / `scale from centre` / `slide from left` / `fade with rotation settle`), accent colour, and layout. Your pick is stored on the shot as `treatment` and is what the builder obeys.
-
-- [ ] **Step 5: The fill call** — `requestFill(spec)` sends the shot, its `scriptLine`, the archetype's required content fields, and the list of files actually present in the assets folder (so `bgSrc` can only name something real). Response → `applyFill` → BASELINE builds it → lands as a new version.
-
-- [ ] **Step 6: Commit** `feat(visuals): GUIDED — you pick the treatment, the model fills the content`.
-
+- [ ] **Step 4: Wire the loop** (same file): `think(spec)` → `applyPatch` → `ef_vis_buildShot` → `ef_vis_dumpShot` + one rendered frame → `verify(spec, dump, framePath)` → `parseVerdict`. **Max two rounds**, then stop and keep the best build. Every round is recorded for the scorecard.
+- [ ] **Step 5: Commit** `feat(visuals): GUIDED — agent thinks and verifies, compiler builds`.
 
 ## Phase 7 — The scorecard
 
@@ -1938,8 +1978,7 @@ Nothing in Phases A–D blocks it. Building it later means adding one pass, not 
 ## Self-review
 
 - **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
-- **Builder coverage:** five builders — BASELINE (Phases 1–3), MENU (Phase 4), LOCAL-CODER and WEB-CODER (Phase 5), GUIDED (Phase 6). The two coders share one prompt builder and one code-extraction path, so the only variables between them are the model and the delivery route. Every build lands as a version of its shot, so comparison needs no separate machinery. ✓
-- **Corrections taken 2026-07-25:** MENU was originally the *only* thing the local model was allowed to do — that was my constraint, not a requirement, and LOCAL-CODER now writes real ExtendScript like the web model does; MENU survives as its own builder because the user wants both tested. GUIDED was inverted: the user picks the treatment and the model fills content, not the reverse. Local code runs straight into AE with no gate (the gate stays for WEB-CODER, whose code arrives from outside). ✓
+- **Bake-off coverage:** four lanes exist (C = Phases 1–3, B = Phase 4, A = Phase 5, D = Phase 6), all consume the same spec and the same `buildPrompt` text so the comparison is fair; scoring is Phase 7; each lane is separately AE-verified in Task 8.2. ✓
 - **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the Adobe reference served on demand to the web agent (Task 5.0b — the mirror itself is 1.9MB, far too big to paste), the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — GUIDED's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
 - **Gap audit (2026-07-25), fixes now in the plan:** assets/`bgSrc` were referenced but never imported → Task 2.7 with visible placeholders; fonts were deferred to "v2" despite `SECTION_TITLE_CARD` being pure typography → Task 2.8 reuses the caption engine's font path; there was no path from 24 comps to a video → Task 2.9's master comp; rebuilds had no defined behaviour → Task 2.6 versions everything and adds Clear All; long text could overflow → `ef_vis_fitText`. ✓
 - **Known model constraint:** the only genuinely local model available is `nemotron-3-nano:4b` — the `:cloud` entries in Ollama require a paid plan. MENU is specified against the 4B model; upgrading to a paid model is a settings change, not a redesign. ✓

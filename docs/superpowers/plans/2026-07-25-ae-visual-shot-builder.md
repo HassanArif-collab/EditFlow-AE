@@ -14,13 +14,13 @@ Five builders, named for what they do rather than by letter:
 | **BASELINE** | nobody — hand-written compiler, no AI | in the panel |
 | **MENU** | a model *composes* from a fixed set of primitives (JSON, not code) | Ollama |
 | **LOCAL-CODER** | a model writes **real ExtendScript** | Ollama, straight into AE |
-| **WEB-CODER** | a model writes **real ExtendScript** | web chat → git branch → gated |
+| **WEB-CODER** | a model writes **real ExtendScript** | web chat → GitHub → your one-click pull → folder → gated |
 | **GUIDED** | **you** pick the treatment; the model fills in the content | Ollama |
 
 - **BASELINE** — the control. Pure code turns a shot into a comp with fixed rules. Every other builder has to beat this, and if none of them do, that's the answer.
 - **MENU** — the model returns `{"calls":[{"fn":"countUp",...}]}`, choosing from primitives that already exist. It cannot emit code, so it cannot emit *broken* code. Fast, cheap, safe — and the honest test of whether composition is enough.
 - **LOCAL-CODER** — the model writes actual ExtendScript (`comp.layers.addText(...)`) and the panel **runs it straight away** in the test project. Write → run → look → fix, on your own machine. This is the tight loop.
-- **WEB-CODER** — the same job, a web model, delivered by git branch and passed through the static gate before it runs. Same task, different model and route: that's the comparison.
+- **WEB-CODER** — the same job, a web model. It pushes one `.jsx` per shot to GitHub; you pull with the button your Content Prompts app already has; the panel reads that folder and runs each file through the static gate. Same task, different model and route: that's the comparison.
 - **GUIDED** — **you** are the art director. You choose the treatment (which title animation, which layout, which accent), and the model does the donkey work: pulls the right number out of the shot, finds and places the image, writes the label text. Your taste, its typing.
 
 LOCAL-CODER and WEB-CODER get **identical** prompts, docs and tasks — the only variables are the model and the route, which is what makes the comparison mean something.
@@ -92,7 +92,7 @@ A comparison without a scorecard is just vibes, and vibes can't tell you whether
 |---|---|---|
 | **Built at all** | `ef_vis_buildShot` returned a comp, no `ERROR:` | A lane that errors on 1 shot in 5 is unusable regardless of how pretty the other 4 are |
 | **Spec fidelity** | `ef_vis_dumpShot` vs the spec: final number, bar count, letter count, comp duration | Catches "looks fine, wrong data" — the failure mode that ruins a documentary |
-| **Rule compliance** | Automated frame checks: title-card letters partially in at t=0.3s (stagger, not block fade); bar chart shows axis before bars; counter reads 0 at t=0 | These are *your* archetype rules from v7, enforced rather than hoped for |
+| **Rule compliance** | Property sampling via `ef_vis_dumpShot(t)` at chosen times — letter 5's opacity still <100% at t=0.3s (stagger, not a block fade); the axis layer's inPoint precedes the bars'; the counter's text reads `0` at t=0 | These are *your* archetype rules from v7, checked rather than hoped for. Reading properties is deterministic; comparing pixels is not, and I was hand-waving when I first wrote 'automated frame checks' |
 | **Looks right** | 3 rendered frames per shot per lane, shown side by side | The part only you can judge |
 | **Cost + time** | Seconds to build, tokens/credits spent | A lane that's 2% better and 40× slower is not better |
 
@@ -154,7 +154,20 @@ Documentary Studio app                     EditFlow-AE
 
 - **Transport, v1: a file.** You export the shotlist from the app, load it in the panel. Zero coupling, works with the tunnel down, and it's how you'll debug when something's wrong.
 - **Transport, v2: the tunnel.** The panel can pull `GET <tunnel>/api/projects/<id>/visual-plans` directly (Task 7.1). Same parser either way.
-- **WEB-CODER's code path.** Your visual-plan record already has a `remotionCode` field — proof this pattern works. We do **not** add a DB column: WEB-CODER pushes its generated builder to a **git branch** in EditFlow-AE (`agent/lane-a/<plan-id>`), which means it's reviewable, diffable, and revertible before a single line runs in your AE.
+- **WEB-CODER's code path — a folder, not a paste box.** The web agent pushes **one file per shot** to GitHub; you pull it with the one-click button your Content Prompts app already has; the panel is pointed at that folder once and reads what's there.
+
+```
+<pulled repo>/generated/ae/
+  shot_01.jsx          ← function ef_gen_shot_01(comp, spec)
+  shot_02.jsx
+  _manifest.json       ← which agent/model/prompt produced this batch
+```
+
+  One file per shot means you can rebuild a single shot, see exactly which ones failed, and diff one shot's code across two models. It also avoids chat interfaces truncating or mangling long ExtendScript, and lets a whole 24-shot batch arrive in one action.
+
+  **Attribution is mandatory, not optional.** Every generated file carries a header line — `// agent: glm-5.2 | prompt: visual-v8-ae | 2026-07-25T14:22Z` — mirrored in `_manifest.json`. The panel parses it and stores it with the version. Without this you end up with two comps side by side and no memory of which model wrote which, and the whole comparison is worthless.
+
+  **A paste box stays as a ten-line fallback** for testing a single idea without a round trip through GitHub. Folder, paste and git all just produce a code string; everything after (gate → run → version → attribute) is one shared path.
 - **Results flow back** as `results.json` (the scorecard), which you can attach to the plan or just read in the panel.
 
 **Prompt rule, unchanged:** the v7 folder is never edited. WEB-CODER's instructions live in the `visual-v8-ae` copy (Task 5.2).
@@ -163,10 +176,10 @@ Documentary Studio app                     EditFlow-AE
 
 WEB-CODER means running ExtendScript that a cloud model wrote, inside After Effects, on a machine with your projects open. That deserves real guard rails, not optimism:
 
-1. **Arrives by git, never by HTTP.** No endpoint accepts code. You `git pull` a branch and can read the diff first.
+1. **Arrives as a file, never over HTTP.** No endpoint accepts code. It reaches your disk through your own pull, and you can open it in any editor first.
 2. **Static gate before it runs** (Task 4.3): the file must define only `ef_gen_*` functions, and must not contain `app.project.close`, `.remove()` outside its own comp, `File(`, `Folder(`, `system.callSystem`, `$.evalFile`, or `app.executeCommand`. Fails the gate → never loaded.
 3. **Sandbox project.** Bake-off runs happen in a dedicated AE project (`EditFlow Bakeoff.aep`), never your working file.
-4. **Explicit human load.** The panel shows the diff summary and requires a click. Nothing auto-runs on `git pull`.
+4. **Explicit human load.** The panel lists what it found in the folder — file, shot, agent, timestamp — and waits for your click. Nothing runs on pull.
 
 ## Design decisions
 
@@ -1282,6 +1295,7 @@ async function ensureVisualsJsx() {
 
 - [ ] **Step 1: Per-shot version control.** Each row in the shot table gets a version dropdown listing that shot's builds (`v1`, `v2`, …), a ★ button to mark one active, and a 🗑 to delete a version. Populated from `ef_vis_listVersions`.
 - [ ] **Step 2: Assets folder setting.** One folder picker at the top ("Where your shot images live"), persisted in `SETTINGS_KEYS` as `assetsDir`, passed into every build. Shots whose asset is missing show a ⚠ badge and are listed under the build results.
+- [ ] **Step 2b: `talkingHead` badge.** Shots with `talkingHead: true` show a 🗣 badge and the tooltip "this sits over you — check framing". v1 does **not** auto-change the layout: guessing at composition over your own face will be wrong more often than right, so it tells you and lets you judge.
 - [ ] **Step 3: Master + clear.** Two buttons under the shot table: **🎞 Build Master** (calls `ef_vis_buildMaster` with `masterOrder(shots, fps)`) and **🗑 Clear All Visuals** behind a confirm, since it deletes every version of every shot.
 - [ ] **Step 4: Verify in the browser rig** — the table renders with mock version lists, the confirm fires, and no call reaches AE when CSInterface is absent (errors show cleanly).
 - [ ] **Step 5: Commit** `feat(visuals): version picker, assets folder, master + clear controls`.
@@ -1703,7 +1717,7 @@ function ef_gen_run(jsonStr) {
 }
 ```
 
-- [ ] **Step 2: The panel side** — `loadLaneABuilder(branch)`: reads the pushed file from the checked-out branch, runs `gateCode`, shows you the function list and a diff summary, and only builds after you click. Nothing auto-runs.
+- [ ] **Step 2: The panel side** — `loadGeneratedFolder(dir)`: reads `*.jsx` via the panel's existing Node `fs` access (already proven — it's how WAV files are loaded), parses each file's attribution header, runs `gateCode` on each, and lists them with shot id / agent / timestamp / gate result. Building happens only on your click, per shot or all at once.
 
 - [ ] **Step 3: Commit** `feat(visuals): WEB-CODER loader with human review gate`.
 
@@ -1719,8 +1733,15 @@ cp -r visual-v7-glm visual-v8-ae
 ```
 
 - [ ] **Step 2: Add `visual-v8-ae/v8/agent_ae_builder.md`** telling the web agent: the archetype rules (already in the copied folder), the AE primitives available, the `ef_gen_*` namespace rule, the forbidden-call list from Task 5.1, that it must push to branch `agent/lane-a/<plan-id>` in EditFlow-AE, and that ExtendScript is **ES3** — no `let`, `const`, arrow functions, or `toLocaleString`.
-- [ ] **Step 3: Verify v7 untouched** — `git status --short prompts/visual-v7-glm` → no output.
-- [ ] **Step 4: Commit in that repo** `feat(prompts): visual-v8-ae lane for the AE builder agent (v7 unchanged)`.
+- [ ] **Step 3: Sync the copy into the app.** The Documentary Studio app serves prompts from **its own copy** at `content-app/prompts/`, not from the repo folder — so without this step the agent gets a 404 from `/api/prompts/visual-v8-ae/...` and nobody will guess why:
+
+```bash
+cp -r prompts/visual-v8-ae content-app/prompts/visual-v8-ae
+curl -s "<tunnel>/api/prompts" | grep visual-v8-ae   # must appear
+```
+
+- [ ] **Step 4: Verify v7 untouched** — `git status --short prompts/visual-v7-glm` → no output.
+- [ ] **Step 5: Commit in that repo** `feat(prompts): visual-v8-ae lane for the AE builder agent (v7 unchanged)`.
 
 ### Task 5.4: The error round-trip
 
@@ -1814,7 +1835,11 @@ export function applyFill(spec, fill) {
 - [ ] **Step 6: Commit** `feat(visuals): GUIDED — you pick the treatment, the model fills the content`.
 
 
-## Phase 7 — The scorecard
+## Phase 7 — The scorecard (deferred — build last, or not at all)
+
+> **Sequencing decision (2026-07-25).** An earlier draft proposed cutting WEB-CODER to control scope. That was wrong: local-writes-code vs web-writes-code *is* the experiment. Scope comes out of the **scaffolding** instead — this whole phase is deferred until the builders exist and you've compared a real shotlist by eye.
+>
+> Versions already give you comparison: build a shot four ways, flip the dropdown, keep the winner. That answers "which is better" without any of the machinery below. Build Phases 1–3 (substrate), then Phase 5 (the two coders — your experiment), then Phases 4 and 6 (MENU and GUIDED), and only then decide whether formal scoring earns its keep.
 
 ### Task 7.1: Run every lane over the same shotlist
 
@@ -1940,10 +1965,12 @@ Nothing in Phases A–D blocks it. Building it later means adding one pass, not 
 - **Constraint coverage:** additive-only → separate `visuals.jsx` + `ef_vis_*` namespace + a Task 3.2 step that *asserts* zero diff on the caption files; new branch → stated below; never edit v7 → Task 5.3 copies the folder and then verifies v7 is clean; top-3 scope → `SUPPORTED_ARCHETYPES` is a hard whitelist, tested; comps in one project → `ef_vis_ensureFolder` + `ef_vis_buildShot`. ✓
 - **Builder coverage:** five builders — BASELINE (Phases 1–3), MENU (Phase 4), LOCAL-CODER and WEB-CODER (Phase 5), GUIDED (Phase 6). The two coders share one prompt builder and one code-extraction path, so the only variables between them are the model and the delivery route. Every build lands as a version of its shot, so comparison needs no separate machinery. ✓
 - **Corrections taken 2026-07-25:** MENU was originally the *only* thing the local model was allowed to do — that was my constraint, not a requirement, and LOCAL-CODER now writes real ExtendScript like the web model does; MENU survives as its own builder because the user wants both tested. GUIDED was inverted: the user picks the treatment and the model fills content, not the reverse. Local code runs straight into AE with no gate (the gate stays for WEB-CODER, whose code arrives from outside). ✓
+- **Phase C/D molds folded in (2026-07-25):** rule compliance is now property sampling, not pixel analysis (C1); the model used is recorded with every version (C2); builders are named by role (C3); WEB-CODER is **kept** and the scorecard automation is deferred instead — the earlier 'cut WEB-CODER' call was wrong because the two coders *are* the experiment (D1, flipped); the v8 prompt copy is synced into `content-app/prompts/` or the agent 404s (D2); `talkingHead` shows a badge rather than guessing at framing (D3). ✓
+- **Delivery route, user's design:** WEB-CODER pushes one `.jsx` per shot to GitHub; the user pulls with the one-click button their Content Prompts app already has; the panel reads that folder via the Node `fs` access it already uses for WAV files. Beats the paste box I proposed — byte-exact, whole batches at once, and free history. Attribution headers are mandatory or the comparison is unmeasurable later. ✓
 - **Anti-hallucination coverage:** generated environment brief + live capability probe (Task 5.0), the Adobe reference served on demand to the web agent (Task 5.0b — the mirror itself is 1.9MB, far too big to paste), the static gate (Task 5.1), the error round-trip (Task 5.4), and — the strongest one — GUIDED's patch whitelist, which makes it *structurally impossible* for the model to change a number or a coordinate. ✓
 - **Gap audit (2026-07-25), fixes now in the plan:** assets/`bgSrc` were referenced but never imported → Task 2.7 with visible placeholders; fonts were deferred to "v2" despite `SECTION_TITLE_CARD` being pure typography → Task 2.8 reuses the caption engine's font path; there was no path from 24 comps to a video → Task 2.9's master comp; rebuilds had no defined behaviour → Task 2.6 versions everything and adds Clear All; long text could overflow → `ef_vis_fitText`. ✓
 - **Known model constraint:** the only genuinely local model available is `nemotron-3-nano:4b` — the `:cloud` entries in Ollama require a paid plan. MENU is specified against the 4B model; upgrading to a paid model is a settings change, not a redesign. ✓
-- **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 7.3, both through **one** parser. No schema change to the Documentary Studio app: WEB-CODER delivers code by git branch, not by a new DB column. ✓
+- **Two-system merge:** the contract is `shotlist.json` — a file in v1 (Task 3.1) and optionally the tunnel API in Task 7.3, both through **one** parser. No schema change to the Documentary Studio app: WEB-CODER delivers code as files you pull with the button you already have. ✓
 - **Restored dependency:** `chat.py` comes back from the EditFlowAI repo in Task 4.1, including the step that adds `chat` to the cleanup guard's route whitelist — otherwise `tests/test_no_premiere.py` fails the moment it lands. ✓
 - **Grounding:** the shotlist shape, all three archetype rule-sets and every motion limit are quoted from your repo, not invented. The one fabrication risk I deliberately avoided: I did **not** invent props for BAR_CHART/SECTION_TITLE_CARD beyond what the archetype rules imply (`bars`, `accentIndex`, `variant`, `supporting`) — these are flagged in Task 5.2 as the fields the v8 prompt copy must emit. ✓
 - **Placeholders:** none — every step carries runnable code or an exact command. The one intentional "wrong then right" snippet (Task 2.3 Scale expression) is called out explicitly so it can't be pasted by accident. ✓

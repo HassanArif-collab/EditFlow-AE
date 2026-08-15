@@ -587,9 +587,17 @@ function ef_vis_renderShot(jsonStr) {
         var f = new File(String(cfg.out));
         try { if (f.exists) f.remove(); } catch (e1) {}
         target.saveFrameToPng(t, f);
-        var chk = new File(f.fsName), len = 0;
-        try { len = chk.length; } catch (e2) {}
-        if (!chk.exists || len < 1024) return ef_vis_err("render produced no/tiny file");
+        // saveFrameToPng returns before the bytes are flushed, so a single
+        // immediate .length read reports 0 on a file that is actually fine.
+        // Re-stat a few times before calling it a failure.
+        var len = 0, chk = null;
+        for (var a = 0; a < 12; a++) {
+            chk = new File(f.fsName);
+            try { len = chk.exists ? chk.length : 0; } catch (e2) { len = 0; }
+            if (len >= 1024) break;
+            $.sleep(120);
+        }
+        if (len < 1024) return ef_vis_err("render produced no/tiny file after 1.4s");
         return ef_vis_json({ path: chk.fsName, at: t, comp: String(target.name), bytes: len });
     } catch (e) { return ef_vis_err("renderShot: " + e.toString()); }
 }

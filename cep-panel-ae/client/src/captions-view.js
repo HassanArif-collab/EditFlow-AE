@@ -29,6 +29,7 @@
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
 import { SAFE_ZONES, boxIntersectsUnsafe, drawSafeZones } from './safe-zones.js';
+import { visualsTabHTML, wireVisualsTab, visualsTabInit, setVisualsRerender } from './visuals-view.js';
 import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, clampBlockY, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -61,6 +62,7 @@ const TABS = [
   { num: 3, label: 'Style',      icon: '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1.5"/><circle cx="16" cy="9" r="1.5"/><circle cx="8" cy="15" r="1.5"/><circle cx="16" cy="15" r="1.5"/>' },
   { num: 4, label: 'Animate',    icon: '<path d="M12 3l1.5 5L19 9.5 13.5 11 12 16 10.5 11 5 9.5 10.5 8z"/>' },
   { num: 5, label: 'Generate',   icon: '<path d="M5 13l4 4L19 7"/>' },
+  { num: 6, label: 'Visuals',    icon: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15l3-4 2 2.5L15 10l2 5z"/>' },
 ];
 
 /* ── State ── */
@@ -150,6 +152,8 @@ function openCaptions() {
   _devCompOverride();
   _ensureStyles();
   _ensureContainer();
+  visualsTabInit();
+  setVisualsRerender(_render);
   _render();
   _setupResizeDrag();
   _refreshModelStatus();
@@ -240,6 +244,11 @@ function _render() {
   v.innerHTML = _buildHTML();
   _wireHeader(v);
   _wireTabs(v);
+  // the Visuals tab reads comp info + the chosen font off window rather than
+  // importing this module back (which would be a circular import)
+  window.__editflowCompInfo = S.compInfo;
+  window.__editflowFontPS = S.fontPS;
+  wireVisualsTab(v);
   _wirePreview(v);
   _wireTabTranscribe(v);
   _wireTabContent(v);
@@ -347,6 +356,7 @@ function _renderAllTabContents() {
     `<div class="cap-tab-content ${S.activeTab === 2 ? 'active' : ''}" data-content="2">${_renderTabStyle()}</div>`,
     `<div class="cap-tab-content ${S.activeTab === 3 ? 'active' : ''}" data-content="3">${_renderTabAnimate()}</div>`,
     `<div class="cap-tab-content ${S.activeTab === 4 ? 'active' : ''}" data-content="4">${_renderTabGenerate()}</div>`,
+    `<div class="cap-tab-content ${S.activeTab === 5 ? 'active' : ''}" data-content="5">${visualsTabHTML(S.compInfo)}</div>`,
   ].join('');
 }
 

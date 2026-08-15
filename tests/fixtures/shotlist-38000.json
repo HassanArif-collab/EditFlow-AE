@@ -1,0 +1,138 @@
+{
+  "project": "38,000 Salary in 2026: Survival Impossible?",
+  "note": "Built from the 'My draft' section. Only the three archetypes After Effects builds in v1 — b-roll and emotional beats stay with the generative tools.",
+  "shots": [
+    {
+      "id": "shot_01",
+      "scriptLine": "That calculation drew a line. A line that decides who is poor and who is not.",
+      "archetype": "SECTION_TITLE_CARD",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 105,
+      "props": {
+        "title": "THE LINE",
+        "supporting": "19 February 2026 — Islamabad",
+        "variant": "slide_up",
+        "stagger": 0.06,
+        "accentColor": "#b8860b"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_02",
+      "scriptLine": "That line is Rs 8,484 per month.",
+      "archetype": "STAT_COUNTER",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 150,
+      "props": {
+        "title": "The official poverty line",
+        "value": 8484,
+        "prefix": "Rs ",
+        "unit": "per month",
+        "accentColor": "#b8860b",
+        "pulse": true
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_03",
+      "scriptLine": "Or just Rs 282 per day.",
+      "archetype": "STAT_COUNTER",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 120,
+      "props": {
+        "title": "Which is",
+        "value": 282,
+        "prefix": "Rs ",
+        "unit": "per day",
+        "accentColor": "#b8860b"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_04",
+      "scriptLine": "A human needs 2350 calories per day to stay alive.",
+      "archetype": "STAT_COUNTER",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 120,
+      "props": {
+        "title": "The calorie basis",
+        "value": 2350,
+        "unit": "calories per day",
+        "accentColor": "#3b82f6"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_05",
+      "scriptLine": "Let's try to live on this number. In Lahore. For one month.",
+      "archetype": "SECTION_TITLE_CARD",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 100,
+      "props": {
+        "title": "ONE MONTH IN LAHORE",
+        "supporting": "Rs 8,484 to spend",
+        "variant": "scale_center",
+        "stagger": 0.05,
+        "accentColor": "#b8860b"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_06",
+      "scriptLine": "The cheapest room is Rs 6,000. A bit more luxury is Rs 8,000. After that we are left with 484 rupees for the whole month.",
+      "archetype": "BAR_CHART",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 180,
+      "props": {
+        "caption": "Step one: a roof",
+        "bars": [
+          { "label": "Shared room", "value": 6000 },
+          { "label": "With gas + wifi", "value": 8000 },
+          { "label": "Left for the month", "value": 484 }
+        ],
+        "accentIndex": 2,
+        "accentColor": "#ef4444"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_07",
+      "scriptLine": "This number is supposed to cover 50% food and 50% everything else.",
+      "archetype": "BAR_CHART",
+      "tool": "ae_comp",
+      "camera": "static",
+      "durationInFrames": 150,
+      "props": {
+        "caption": "What Rs 8,484 must cover",
+        "bars": [
+          { "label": "Food", "value": 4242 },
+          { "label": "Everything else", "value": 4242 }
+        ],
+        "accentIndex": 1,
+        "accentColor": "#b8860b"
+      },
+      "talkingHead": false
+    },
+    {
+      "id": "shot_08",
+      "scriptLine": "Emotional beat over the committee footage — belongs to the generative tools, not AE.",
+      "archetype": "EMOTIONAL_MOMENT",
+      "tool": "flow_veo",
+      "camera": "slow_push",
+      "durationInFrames": 120,
+      "props": {},
+      "talkingHead": false
+    }
+  ],
+  "metadata": {
+    "totalShots": 8,
+    "aeShots": 7,
+    "generativeShots": 1
+  }
+}

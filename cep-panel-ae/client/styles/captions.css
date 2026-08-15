@@ -733,3 +733,26 @@ body { display: flex; flex-direction: column; }
   margin: 6px 8px 0; padding: 5px 8px; border-radius: 4px; font-size: 10px; line-height: 1.35;
   background: rgba(245, 158, 11, .12); border: 1px solid rgba(245, 158, 11, .35); color: #f59e0b;
 }
+
+/* ═══════════ Visuals tab ═══════════ */
+.vis-table { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
+.vis-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 8px; border-radius: 5px; background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.vis-row-active { border-color: var(--accent, #5b8def); background: rgba(91,141,239,.10); }
+.vis-row-main { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; }
+.vis-row-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.vis-arch {
+  font: 600 9px/1 monospace; letter-spacing: .04em; padding: 3px 5px; border-radius: 3px;
+  flex-shrink: 0; color: #cfd3da; background: rgba(255,255,255,.07);
+}
+.vis-arch-stat_counter       { background: rgba(59,130,246,.20); color: #93c5fd; }
+.vis-arch-bar_chart          { background: rgba(16,185,129,.20); color: #6ee7b7; }
+.vis-arch-section_title_card { background: rgba(168,85,247,.20); color: #d8b4fe; }
+.vis-id { font: 10px monospace; color: var(--text-3, #8b8b99); flex-shrink: 0; }
+.vis-summary {
+  font-size: 11px; color: var(--text-2, #c9c9d4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}

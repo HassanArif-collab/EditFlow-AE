@@ -40,6 +40,20 @@ async function initExtendScript() {
     });
   });
 
+  // Load the visual shot builder alongside it. Separate file, separate
+  // ef_vis_* namespace — a failure here must never stop captions working.
+  const visPath = (extensionRoot + '/extendscript/visuals.jsx').replace(/\\/g, '/');
+  await new Promise((resolve) => {
+    _csInterface.evalScript('$.evalFile("' + visPath + '")', (result) => {
+      if (result === 'EvalScript error.' || result === undefined) {
+        console.warn('[extendscript] visuals.jsx failed to load — the Visuals tab will not build');
+      } else {
+        console.log('[extendscript] visuals.jsx loaded');
+      }
+      resolve();
+    });
+  });
+
   // Verify with ping
   try {
     const ping = await _evalScriptRaw('ef_ping()');

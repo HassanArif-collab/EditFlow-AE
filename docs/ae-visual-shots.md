@@ -32,12 +32,35 @@ silently dropped.
 6. **🎞 Build Master** — every active version, end to end, ready to render.
 7. **🗑 Clear All** wipes every generated shot and starts over.
 
+## Closing After Effects
+
+Nothing is lost, provided the project is **saved**.
+
+- **What you built** lives in the project, as comps under `EF Visuals/`. The
+  panel keeps no authority over it — every time you open the Visuals tab it
+  re-reads the project and shows what is actually there. Building a comp by
+  hand, or switching projects, shows up without pressing anything.
+- **The shotlist** has no home inside an `.aep`, so it is written next to it:
+  `MyDoc.aep` → `MyDoc.editflow-visuals.json`. It travels with the project
+  and opens in any text editor.
+
+**An unsaved project is the one case where work really does disappear** —
+After Effects itself discards untitled projects on close, and no panel can
+recover them. The tab says so in a yellow banner until you `File → Save`.
+
+If the shotlist is ever missing, comps still show as **IN PROJECT** rows so
+you can open or delete them. A lost shotlist never reads as lost work.
+
 ## Versions
 
 Building never overwrites. A rebuild — or a different agent's attempt at the
 same shot — becomes `shot_01 v2`, `v3`, and so on inside `EF Visuals/shot_01/`.
 That's also how you compare approaches: build the same shot two ways, flip
 the dropdown, keep the winner, delete the rest.
+
+The 🗑 button deletes **the version selected in the dropdown**. Deleting the
+active one promotes another, so a shot can never end up with no active
+version and silently vanish from the master.
 
 ## Project layout
 
@@ -60,6 +83,14 @@ Give your web agent the two files in
 - `AE_ENVIRONMENT.md` — only needed if the agent will write ExtendScript
 
 The v7 folder is untouched and still owns the generative lane.
+
+## The master
+
+`🎞 Build Master` lays every shot's active version end to end. A shot you
+haven't built yet **keeps its slot** rather than closing the gap — the
+timeline stays aligned to the narration and the hole is visible, instead of
+every later shot silently sliding earlier. The button tells you how many are
+missing before you press it.
 
 ## Known limits (v1)
 

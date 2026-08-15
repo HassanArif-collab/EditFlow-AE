@@ -29,7 +29,8 @@
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
 import { SAFE_ZONES, boxIntersectsUnsafe, drawSafeZones } from './safe-zones.js';
-import { visualsTabHTML, wireVisualsTab, visualsTabInit, setVisualsRerender } from './visuals-view.js';
+import { visualsTabHTML, wireVisualsTab, visualsTabInit, setVisualsRerender,
+         sync as visualsSync } from './visuals-view.js';
 import { groupWords, wrapLines, wordAnim, captionTiming, matchTimingsToWords, clampBlockY, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -801,6 +802,10 @@ function _wireTabs(v) {
       if (isNaN(idx)) return;
       S.activeTab = idx;
       _updateActiveTab();
+      // The Visuals tab reads its truth from the AE project, so re-read it
+      // on every open: a project switch or a hand-made comp shows up without
+      // the user having to know there's a Refresh button.
+      if (idx === 5) visualsSync().catch(() => {});
     };
   });
 }

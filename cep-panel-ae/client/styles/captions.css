@@ -668,6 +668,13 @@ body { display: flex; flex-direction: column; }
 .cap-status-ok { color: var(--success); font-size: 11px; }
 .cap-status-err { color: var(--error); font-size: 11px; word-break: break-word; white-space: pre-wrap; }
 .cap-status-progress { color: var(--text-2); font-size: 11px; word-break: break-word; }
+/* Not an error — a condition the user can fix (e.g. an unsaved project that
+   has nowhere to keep its shotlist). Reads as a caution, not a failure. */
+.cap-status-warn {
+  color: #fcd34d; font-size: 11px; line-height: 1.5; word-break: break-word;
+  background: rgba(251,191,36,.10); border: 1px solid rgba(251,191,36,.25);
+  border-radius: 4px; padding: 7px 9px;
+}
 .cap-status-badge {
   display: inline-block; padding: 3px 10px; border-radius: 20px;
   font-size: 10px; font-weight: 600;

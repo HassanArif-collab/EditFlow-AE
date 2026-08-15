@@ -171,3 +171,92 @@ test('masterOrder lays shots end-to-end with a running offset', () => {
   assert.equal(out[1].startTime, 1);
   assert.equal(out[1].duration, 1.5);
 });
+
+/* ── reconcile: surviving an After Effects restart ──────────────────
+   The panel's memory dies when AE closes. The comps do not. These tests
+   pin the rule that makes that a non-event: the PROJECT says what is
+   built, and nothing the panel forgot may present as work that is gone. */
+
+const spec = (id) => M.normalizeShot(
+  { id, archetype: 'STAT_COUNTER', durationInFrames: 150, props: { value: 100 } }
+).spec;
+
+const proj = (...entries) => ({
+  shots: entries.map(([shot, versions]) => ({
+    shot,
+    versions: versions.map((v) => typeof v === 'string'
+      ? { name: v.replace(/^★ /, ''), active: v.startsWith('★ '), duration: 5, layers: 4 }
+      : v),
+  })),
+});
+
+test('a reopened project reports built shots even though the panel forgot', () => {
+  // exactly the reported bug: shotlist reloaded from disk, panel memory empty
+  const r = M.reconcile([spec('shot_01'), spec('shot_02')],
+                        proj(['shot_01', ['★ shot_01 v1']]));
+  assert.equal(r.rows[0].built, true, 'the comp exists in the project');
+  assert.equal(r.rows[0].activeVersion, 'shot_01 v1');
+  assert.equal(r.rows[0].activeLayers, 4);
+  assert.equal(r.rows[1].built, false, 'shot_02 was genuinely never built');
+  assert.equal(r.built, 1);
+});
+
+test('comps with no shotlist row are shown as orphans, never hidden', () => {
+  // losing a shotlist must not read as losing the work
+  const r = M.reconcile([], proj(['shot_07', ['★ shot_07 v1', 'shot_07 v2']]));
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.rows[0].orphan, true);
+  assert.equal(r.rows[0].built, true);
+  assert.deepEqual(r.orphans, ['shot_07']);
+  assert.equal(r.rows[0].versions.length, 2, 'both versions stay reachable');
+});
+
+test('shotlist order is kept, with orphans appended after it', () => {
+  const r = M.reconcile([spec('shot_02'), spec('shot_01')],
+                        proj(['zz_extra', ['★ zz_extra v1']], ['shot_01', ['★ shot_01 v1']]));
+  assert.deepEqual(r.rows.map((x) => x.id), ['shot_02', 'shot_01', 'zz_extra']);
+});
+
+test('the starred version is the active one, whatever order AE lists them in', () => {
+  const r = M.reconcile([spec('shot_01')],
+                        proj(['shot_01', ['shot_01 v1', '★ shot_01 v2', 'shot_01 v3']]));
+  assert.equal(r.rows[0].activeVersion, 'shot_01 v2');
+});
+
+test('with no star at all the first version is used, matching what the master does', () => {
+  const r = M.reconcile([spec('shot_01')], proj(['shot_01', ['shot_01 v1', 'shot_01 v2']]));
+  assert.equal(r.rows[0].activeVersion, 'shot_01 v1');
+});
+
+test('an older jsx returning bare strings still renders instead of throwing', () => {
+  // version skew between a reloaded panel and a not-yet-reloaded jsx
+  const r = M.reconcile([spec('shot_01')],
+                        { shots: [{ shot: 'shot_01', versions: ['★ shot_01 v1'] }] });
+  assert.equal(r.rows[0].built, true);
+  assert.equal(r.rows[0].activeVersion, 'shot_01 v1');
+});
+
+test('an empty project leaves every shot unbuilt rather than erroring', () => {
+  const r = M.reconcile([spec('shot_01')], { shots: [] });
+  assert.equal(r.rows[0].built, false);
+  assert.equal(r.built, 0);
+  assert.deepEqual(M.reconcile([], null).rows, [], 'no project payload at all');
+});
+
+/* ── masterPlan ── */
+
+test('an unbuilt shot keeps its slot so later shots stay on the narration', () => {
+  const rows = M.reconcile([spec('shot_01'), spec('shot_02'), spec('shot_03')],
+                           proj(['shot_01', ['★ shot_01 v1']], ['shot_03', ['★ shot_03 v1']])).rows;
+  const plan = M.masterPlan(rows, 30);
+  assert.deepEqual(plan.missing, ['shot_02']);
+  assert.equal(plan.order[2].startTime, 10, 'shot_03 does NOT slide earlier into the gap');
+  assert.equal(plan.order.length, 3);
+});
+
+test('orphans are never placed in the master', () => {
+  const rows = M.reconcile([spec('shot_01')],
+                           proj(['shot_01', ['★ shot_01 v1']], ['stray', ['★ stray v1']])).rows;
+  const plan = M.masterPlan(rows, 30);
+  assert.deepEqual(plan.order.map((o) => o.id), ['shot_01']);
+});

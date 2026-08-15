@@ -202,6 +202,92 @@ export function nextVersionName(shotId, existingNames) {
   return `${shotId} v${max + 1}`;
 }
 
+/* ── Reconciling the panel with the project ───────────────── */
+
+/**
+ * Merge the loaded shotlist with what actually exists in the AE project.
+ *
+ * The project is the truth about what is BUILT. The panel must never claim
+ * a shot is unbuilt because it forgot — reopening After Effects wipes the
+ * panel's memory but not the comps, and the two have to agree.
+ *
+ * Shots present in the project but missing from the shotlist are ORPHANS:
+ * still listed, still openable, still deletable. Hiding them would mean a
+ * lost shotlist reads as lost work.
+ *
+ * @param shots    specs from parseShotlist (may be empty)
+ * @param project  the ef_vis_listAll payload: { shots: [{shot, versions}] }
+ */
+export function reconcile(shots, project) {
+  const byId = new Map();
+  for (const entry of (project && project.shots) || []) {
+    byId.set(String(entry.shot), (entry.versions || []).map(_normVersion));
+  }
+
+  const rows = [];
+  const seen = new Set();
+  for (const spec of shots || []) {
+    const versions = byId.get(spec.id) || [];
+    seen.add(spec.id);
+    rows.push(_row(spec.id, spec, versions, false));
+  }
+  for (const [id, versions] of byId) {
+    if (!seen.has(id)) rows.push(_row(id, null, versions, true));
+  }
+
+  return {
+    rows,
+    orphans: rows.filter((r) => r.orphan).map((r) => r.id),
+    built: rows.filter((r) => r.built).length,
+    total: rows.length,
+    master: (project && project.master) || null,
+  };
+}
+
+function _normVersion(v) {
+  // tolerate the old shape (a bare "★ shot_01 v1" string) so a stale panel
+  // or an older jsx still renders instead of throwing
+  if (typeof v === 'string') {
+    return { name: v.replace(/^★ /, ''), active: v.indexOf('★ ') === 0, duration: 0, layers: 0 };
+  }
+  return {
+    name: String((v && v.name) || '').replace(/^★ /, ''),
+    active: !!(v && v.active),
+    duration: Number((v && v.duration) || 0),
+    layers: Number((v && v.layers) || 0),
+  };
+}
+
+function _row(id, spec, versions, orphan) {
+  const active = versions.find((v) => v.active) || versions[0] || null;
+  return {
+    id,
+    spec,
+    orphan,
+    versions,
+    built: versions.length > 0,
+    activeVersion: active ? active.name : '',
+    activeDuration: active ? active.duration : 0,
+    activeLayers: active ? active.layers : 0,
+  };
+}
+
+/**
+ * Which shots the master will contain, and which it will be missing.
+ *
+ * An unbuilt shot keeps its SLOT rather than closing the gap: the timeline
+ * stays aligned to the narration, and the hole is visible instead of every
+ * later shot silently sliding earlier. Orphans have no position in the
+ * shotlist, so they are not placed at all.
+ */
+export function masterPlan(rows, fps) {
+  const placed = (rows || []).filter((r) => r.spec);
+  return {
+    order: masterOrder(placed.map((r) => r.spec), fps),
+    missing: placed.filter((r) => !r.built).map((r) => r.id),
+  };
+}
+
 /* ── Master timeline ──────────────────────────────────────── */
 
 /**

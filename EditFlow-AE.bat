@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-::  EditFlow AI AE — ONE-CLICK: installs (first time) + starts the backend
+::  EditFlow AI AE - ONE-CLICK: installs (first time) + starts the backend
 :: ============================================================================
 ::  Double-click this file. Every time. That's the whole routine.
 ::   - First run: checks Python, sets everything up, connects the panel to
@@ -15,7 +15,7 @@ setlocal enabledelayedexpansion
 set "PS1=%TEMP%\editflow_ae_oneclick_%RANDOM%.ps1"
 
 :: Extract the PowerShell portion of this file to a temp script
-powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -Pattern '^# PS_SCRIPT_START$' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
+powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0' -Encoding UTF8; $marker = ($lines | Select-String -Pattern '^# PS_SCRIPT_START$' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
 
 if not exist "%PS1%" (
     echo.
@@ -24,7 +24,7 @@ if not exist "%PS1%" (
     exit /b 1
 )
 
-:: NOTE: "%~dp0." — the trailing dot stops the path's final backslash from
+:: NOTE: "%~dp0." - the trailing dot stops the path's final backslash from
 :: escaping the closing quote (classic cmd->PowerShell quoting trap).
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -BatDir "%~dp0." -BatFile "%~f0"
 
@@ -59,7 +59,7 @@ function Write-Err($msg)  { Write-Host "    [X] $msg" -ForegroundColor Red }
 function Write-Info($msg) { Write-Host "    $msg" -ForegroundColor Gray }
 function Test-Command($cmd) { try { Get-Command $cmd -ErrorAction Stop | Out-Null; return $true } catch { return $false } }
 
-# ── Where are we? ─────────────────────────────────────────────────────────
+# -- Where are we? ---------------------------------------------------------
 $BatDir = ($BatDir -replace '"', '').TrimEnd('.')   # undo the quoting-trap dot
 if ($BatDir -and (Test-Path $BatDir)) { $ScriptDir = $BatDir.TrimEnd('\').TrimEnd('/') }
 else { $ScriptDir = (Get-Location).Path }
@@ -67,8 +67,8 @@ if ($ScriptDir -like "*\Temp\*" -or $ScriptDir -like "*\tmp\*") {
     $ScriptDir = [Environment]::GetFolderPath("UserProfile")
 }
 
-# Repo mode: this .bat sits inside a checkout (dev PC) → use it in place.
-# Download mode: fresh PC → install into EditFlowAI-AE next to the .bat.
+# Repo mode: this .bat sits inside a checkout (dev PC) -> use it in place.
+# Download mode: fresh PC -> install into EditFlowAI-AE next to the .bat.
 if (Test-Path (Join-Path $ScriptDir "backend\main.py")) {
     $InstallDir = $ScriptDir
     $Mode = "repo"
@@ -86,7 +86,7 @@ Write-Host "    EditFlow AI AE - Animated Captions" -ForegroundColor Cyan
 Write-Host "  ==================================================" -ForegroundColor Cyan
 Write-Info "Folder: $InstallDir"
 
-# ── Step 1: After Effects check (informational, never blocks) ─────────────
+# -- Step 1: After Effects check (informational, never blocks) -------------
 Write-Step "Checking After Effects..."
 $aeNames = @()
 foreach ($base in @((Join-Path $env:ProgramFiles "Adobe"), (Join-Path ${env:ProgramFiles(x86)} "Adobe"))) {
@@ -103,7 +103,7 @@ if ($aeNames.Count -gt 0) {
     Write-Warn "install AE 2022+ to actually use the panel."
 }
 
-# ── Step 2: Get the code (download mode, first time only) ─────────────────
+# -- Step 2: Get the code (download mode, first time only) -----------------
 if (-not (Test-Path (Join-Path $InstallDir "backend\main.py"))) {
     Write-Step "Downloading EditFlow AI AE (first time only)..."
     if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
@@ -127,7 +127,7 @@ if (-not (Test-Path (Join-Path $InstallDir "backend\main.py"))) {
     Write-OK "Extracted"
 }
 
-# ── Step 3: Python + environment (skipped when already set up) ────────────
+# -- Step 3: Python + environment (skipped when already set up) ------------
 if (-not (Test-Path $pyExe)) {
     Write-Step "Setting up Python (first time only)..."
     $python = $null
@@ -172,10 +172,10 @@ if (-not (Test-Path $pyExe)) {
     Write-OK "Python environment already set up"
 }
 
-# ── Step 4: Connect the panel to After Effects (idempotent) ───────────────
-# ── FFmpeg (bundled, no admin rights needed) ──────────────────────────────
+# -- Step 4: Connect the panel to After Effects (idempotent) ---------------
+# -- FFmpeg (bundled, no admin rights needed) ------------------------------
 # Whisper/WhisperX need ffmpeg to read audio. It lives under data/ which is
-# never committed to git, so a fresh clone has none — fetch it once, into the
+# never committed to git, so a fresh clone has none - fetch it once, into the
 # project, without touching the system PATH.
 $ffmpegOk = $false
 try { if (Get-Command ffmpeg -ErrorAction Stop) { $ffmpegOk = $true } } catch {}
@@ -199,7 +199,7 @@ if (-not $ffmpegOk) {
         Remove-Item $zip -Force -ErrorAction SilentlyContinue
         Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path (Join-Path $toolsDir "ffmpeg.exe")) { Write-OK "FFmpeg ready" }
-        else { Write-Warn "FFmpeg extract failed — transcription may not work." }
+        else { Write-Warn "FFmpeg extract failed - transcription may not work." }
     } catch {
         Write-Warn "Could not download FFmpeg: $_"
         Write-Warn "Transcription needs it. Install with: winget install Gyan.FFmpeg"
@@ -222,7 +222,7 @@ cmd.exe /c "mklink /J `"$targetDir`" `"$aePanelDir`"" | Out-Null
 if (Test-Path $targetDir) { Write-OK "Panel linked (Window > Extensions > EditFlow AI)" }
 else { Write-Err "Could not link the panel into $cepDir"; exit 1 }
 
-# Allow the unsigned panel in every AE version's CEP runtime (2022 → future).
+# Allow the unsigned panel in every AE version's CEP runtime (2022 -> future).
 foreach ($v in 11..15) {
     $regPath = "HKCU:\SOFTWARE\Adobe\CSXS.$v"
     if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
@@ -230,7 +230,7 @@ foreach ($v in 11..15) {
 }
 Write-OK "Extension allowed for your After Effects version"
 
-# ── Step 5: Desktop shortcut to THIS file (so it's always one click) ──────
+# -- Step 5: Desktop shortcut to THIS file (so it's always one click) ------
 try {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $shortcutPath = Join-Path $desktop "EditFlow AI AE.lnk"
@@ -246,7 +246,7 @@ try {
     }
 } catch { Write-Warn "Could not create a desktop shortcut (not important)." }
 
-# ── Step 6: Start the backend ─────────────────────────────────────────────
+# -- Step 6: Start the backend ---------------------------------------------
 Write-Step "Starting the backend..."
 # Free the port if an old backend is still running.
 try {
@@ -269,7 +269,7 @@ Write-Host "    3. KEEP THIS WINDOW OPEN while you work" -ForegroundColor Yellow
 Write-Host ""
 
 # Agent bridge: lets a coding agent on THIS computer test the panel inside
-# AE automatically (localhost only — not reachable from the internet).
+# AE automatically (localhost only - not reachable from the internet).
 $env:EDITFLOW_AGENT_BRIDGE = "1"
 Set-Location $InstallDir
 & $pyExe run.py --prod

@@ -11,6 +11,8 @@ ENV/
 # Distribution / packaging
 dist/
 build/
+# ...except these: committed fixture helpers, not build output
+!tests/fixtures/build/
 *.egg-info/
 
 # CEP / Web

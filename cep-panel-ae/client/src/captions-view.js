@@ -433,6 +433,10 @@ function _renderTabContent() {
     <div class="cap-btn-group" style="margin-bottom: 10px;">
       <button id="cap-pill-all" class="cap-btn cap-btn-secondary cap-btn-tiny">Pill All</button>
       <button id="cap-pill-clear" class="cap-btn cap-btn-secondary cap-btn-tiny">Clear Pills</button>
+      <button id="cap-fix-transcript" class="cap-btn cap-btn-secondary cap-btn-tiny" ${S.busy || !S.words.length ? 'disabled' : ''}
+              title="Let the AI read the transcript and fix misheard words. Timestamps are never changed.">✨ Fix Words</button>
+      ${S._lastFixUndo ? `<button id="cap-undo-fix" class="cap-btn cap-btn-secondary cap-btn-tiny" ${S.busy ? 'disabled' : ''}
+              title="Put every word back the way Whisper heard it.">↩ Undo Fix</button>` : ''}
       <span style="margin-left:auto; color:var(--text-3); font-size:10px; align-self:center;">${S.words.length} words</span>
     </div>
     <div class="cap-word-list" id="cap-word-list">${_buildWordListHTML()}</div>
@@ -944,6 +948,18 @@ function _wireTabContent(v) {
   if (pillAll) pillAll.onclick = () => {
     S.words.forEach((w) => { w.pill = true; });
     _refreshAllWordRows(); _refreshSummary(); _updatePreview();
+  };
+  const fixBtn = v.querySelector('#cap-fix-transcript');
+  if (fixBtn) fixBtn.onclick = _onFixTranscript;
+  const undoFix = v.querySelector('#cap-undo-fix');
+  if (undoFix) undoFix.onclick = () => {
+    if (!S._lastFixUndo) return;
+    S._lastFixUndo.forEach((w, i) => {
+      if (S.words[i]) { S.words[i].word = w.word; S.words[i].text = w.word; }
+    });
+    S._lastFixUndo = null;
+    S.status = 'Words restored to what Whisper heard.';
+    _render(); _refreshContentList(); _updatePreview();
   };
   const pillClear = v.querySelector('#cap-pill-clear');
   if (pillClear) pillClear.onclick = () => {
@@ -1614,6 +1630,53 @@ async function _onPullTimings() {
     S.error = e.message || String(e);
   } finally {
     S.busy = false; _render(); _updatePreview();
+  }
+}
+
+/* AI correction pass. The model may only swap single words by index, so
+   the word count — and every timestamp — is unchanged. Changes are shown
+   before they're kept. */
+async function _onFixTranscript() {
+  if (S.busy || !S.words.length) return;
+  S.busy = true; S.error = null; S.status = 'Reading the transcript…'; _render();
+  const before = S.words.map((w) => ({ ...w }));
+  try {
+    const resp = await apiPost('/api/subtitles/correct', {
+      words: S.words.map((w) => ({ word: w.word || w.text || '', start: w.start, end: w.end })),
+      language: S.language && S.language !== 'auto' ? S.language : 'ur',
+      vocab: S.customVocab || '',
+      context: S._fixContext || '',
+    }, { timeoutMs: 300000 });
+
+    const refused = (resp.rejected || []).length;
+    if (resp.applied) {
+      resp.words.forEach((w, i) => {
+        if (S.words[i]) { S.words[i].word = w.word; S.words[i].text = w.word; }
+      });
+      const sample = (resp.changes || []).slice(0, 4)
+        .map((c) => `${c.from}→${c.to}`).join(', ');
+      S.status = `Fixed ${resp.applied} word${resp.applied === 1 ? '' : 's'}` +
+                 `${sample ? ' — ' + sample : ''}` +
+                 `${resp.changes.length > 4 ? ` and ${resp.changes.length - 4} more` : ''}.` +
+                 `${refused ? ` Ignored ${refused} that didn't match the original.` : ''}`;
+      S._lastFixUndo = before;
+    } else if (refused) {
+      // every suggestion was an unrelated word — that's a model problem, not
+      // a clean transcript. Saying "no errors found" here would be a lie.
+      S.error = `${resp.model || 'This model'} returned ${refused} replacement` +
+                `${refused === 1 ? '' : 's'} that don't match the words being ` +
+                `corrected (e.g. ${resp.rejected[0].from}→${resp.rejected[0].to}). ` +
+                `Nothing was changed. Try a larger model.`;
+    } else {
+      S.status = 'No misheard words found.';
+    }
+    if (resp.failures && resp.failures.length) {
+      S.error = `Some chunks failed: ${resp.failures[0]}`;
+    }
+  } catch (e) {
+    S.error = e.message || String(e);
+  } finally {
+    S.busy = false; _render(); _refreshContentList(); _updatePreview();
   }
 }
 

@@ -799,8 +799,13 @@ class ProviderService:
         system: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        think: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Send a chat completion request to the active provider.
+
+        `think=False` turns off a reasoning model's thinking pass (Ollama
+        only). Extraction jobs like transcript correction don't need it and
+        a 4B model spends its whole time budget there otherwise.
 
         Returns: {response: str, source: str, provider_id: str, error: str|None}
         """
@@ -879,13 +884,14 @@ class ProviderService:
             chat_messages = [{"role": "system", "content": system}] + chat_messages
 
         if provider_type == ProviderType.OLLAMA.value:
-            return await self._ollama_chat(client, provider_id, model, chat_messages, temperature, timeout)
+            return await self._ollama_chat(client, provider_id, model, chat_messages, temperature, timeout, think)
         else:
             return await self._openai_chat(client, provider_id, model, chat_messages, temperature, max_tokens, timeout)
 
     async def _ollama_chat(
         self, client: httpx.AsyncClient, provider_id: str, model: str,
-        messages: List[Dict], temperature: float, timeout: int
+        messages: List[Dict], temperature: float, timeout: int,
+        think: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """Chat via Ollama's /api/chat endpoint.
 
@@ -914,6 +920,8 @@ class ProviderService:
                 "keep_alive": "30m",
                 "options": {"temperature": temperature},
             }
+            if think is not None:
+                payload["think"] = think
             try:
                 resp = await client.post(
                     "/api/chat",

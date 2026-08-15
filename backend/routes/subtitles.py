@@ -94,6 +94,72 @@ async def srt(req: SrtReq):
     return {"srt": text, "srt_path": srt_path}
 
 
+class CorrectReq(BaseModel):
+    words: list[dict]
+    language: str = "ur"
+    vocab: str = ""
+    context: str = ""
+    model: Optional[str] = None       # None = the panel's active chat model
+
+
+@router.post("/correct")
+async def correct_transcript(req: CorrectReq):
+    """AI pass over a transcript: fix mishearings, keep every timestamp.
+
+    The model may only return indexed 1:1 word replacements, so the word
+    count — and therefore the timing of every later word — cannot change.
+    Anything malformed is dropped rather than applied.
+    """
+    from ..services.provider_service import provider_service
+    from ..services.subtitles.transcript_corrector import (
+        apply_corrections, build_prompt, chunk_words, parse_corrections,
+    )
+
+    words = req.words or []
+    if not words:
+        raise HTTPException(status_code=400, detail="No words to correct.")
+
+    all_corrections: list[dict] = []
+    failures: list[str] = []
+    for offset, chunk in chunk_words(words, 220):
+        prompt = build_prompt(chunk, language=req.language, vocab=req.vocab,
+                              context=req.context)
+        try:
+            resp = await provider_service.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=req.model,
+                temperature=0,          # corrections are not a creative task
+                max_tokens=2048,
+                think=False,            # nor a reasoning one — a small model
+                                        # spends its whole budget thinking
+            )
+        except Exception as exc:  # noqa: BLE001 — one bad chunk must not lose the rest
+            failures.append(f"words {offset}-{offset + len(chunk)}: {exc}")
+            continue
+        if resp.get("error"):
+            failures.append(f"words {offset}-{offset + len(chunk)}: {resp['error']}")
+            continue
+        for c in parse_corrections(resp.get("response", ""), len(chunk)):
+            all_corrections.append({"i": c["i"] + offset, "to": c["to"]})
+
+    result = apply_corrections(words, all_corrections, vocab=req.vocab)
+    if result["rejected"]:
+        # a model that mostly gets refused is the wrong model for this job —
+        # say so in the log so the failure isn't silent
+        logger.warning("subtitles.correct: rejected %d implausible correction(s), "
+                       "applied %d — e.g. %s",
+                       len(result["rejected"]), result["applied"],
+                       result["rejected"][:3])
+    return {
+        "words": result["words"],
+        "applied": result["applied"],
+        "changes": result["changes"],
+        "rejected": result["rejected"],
+        "failures": failures,
+        "model": (provider_service.get_active_chat() or {}).get("model") if not req.model else req.model,
+    }
+
+
 def _whisperx_model_size(active_model: str) -> str:
     """Map a full model name (e.g. 'Systran/faster-whisper-large-v3') to the
     plain size string WhisperX loads ('large-v3')."""

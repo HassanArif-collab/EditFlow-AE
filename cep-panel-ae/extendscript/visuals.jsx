@@ -477,6 +477,47 @@ function ef_vis_buildTitleCard(comp, spec, cfg, missing) {
     return 1;
 }
 
+/* ── the recipe table ───────────────────────────────────────
+   One list, used both to dispatch a build and to answer "what can this
+   install actually build?". A recipe is reported as built only when its
+   builder function really exists in this file, so the published registry
+   cannot promise something that would fail in AE. Adding a recipe means
+   adding a builder and one row here — nowhere else. */
+
+var EF_VIS_RECIPES = [
+    { name: "STAT_COUNTER",       fn: "ef_vis_buildStatCounter" },
+    { name: "BAR_CHART",          fn: "ef_vis_buildBarChart" },
+    { name: "SECTION_TITLE_CARD", fn: "ef_vis_buildTitleCard" },
+    { name: "LINE_GRAPH",         fn: "ef_vis_buildLineGraph" },
+    { name: "COMPARISON_PANEL",   fn: "ef_vis_buildComparisonPanel" },
+    { name: "DOC_HIGHLIGHT",      fn: "ef_vis_buildDocHighlight" },
+    { name: "ASSET_REVEAL",       fn: "ef_vis_buildAssetReveal" }
+];
+
+function ef_vis_builderFor(name) {
+    var want = String(name || "").toUpperCase();
+    for (var i = 0; i < EF_VIS_RECIPES.length; i++) {
+        if (EF_VIS_RECIPES[i].name !== want) continue;
+        var fn = null;
+        try { fn = $.global[EF_VIS_RECIPES[i].fn]; } catch (e) { fn = null; }
+        return (typeof fn === "function") ? fn : null;
+    }
+    return null;
+}
+
+function ef_vis_recipes() {
+    try {
+        var out = [];
+        for (var i = 0; i < EF_VIS_RECIPES.length; i++) {
+            out.push({
+                name: EF_VIS_RECIPES[i].name,
+                built: ef_vis_builderFor(EF_VIS_RECIPES[i].name) !== null
+            });
+        }
+        return ef_vis_json({ recipes: out, aeVersion: String(app.version) });
+    } catch (e) { return ef_vis_err("recipes: " + e.toString()); }
+}
+
 /* ── build one shot ────────────────────────────────────────
    Always a NEW version; never overwrites. */
 function ef_vis_buildShot(jsonStr) {
@@ -497,11 +538,17 @@ function ef_vis_buildShot(jsonStr) {
         comp.parentFolder = folder;
         comp.bgColor = cfg.bgColor || [0.04, 0.05, 0.08];
 
+        // The brief separates recipe (what AE builds) from archetype (why the
+        // script needs the shot). Prefer the recipe; fall back to archetype so
+        // older shotlists that only carry one still build.
+        var wanted = spec.recipe || spec.archetype;
         var missing = [];
-        if (spec.archetype === "STAT_COUNTER") ef_vis_buildStatCounter(comp, spec, cfg, missing);
-        else if (spec.archetype === "BAR_CHART") ef_vis_buildBarChart(comp, spec, cfg, missing);
-        else if (spec.archetype === "SECTION_TITLE_CARD") ef_vis_buildTitleCard(comp, spec, cfg, missing);
-        else { app.endUndoGroup(); comp.remove(); return ef_vis_err("unsupported archetype: " + spec.archetype); }
+        var builder = ef_vis_builderFor(wanted);
+        if (!builder) {
+            app.endUndoGroup(); comp.remove();
+            return ef_vis_err("no builder for \"" + wanted + "\" in this version");
+        }
+        builder(comp, spec, cfg, missing);
 
         // first build of a shot becomes the active version
         if (ef_vis_listVersions(spec.id).length === 1) ef_vis_setActiveVersion(spec.id, name);

@@ -48,15 +48,25 @@ test('every recipe the jsx can build is described in the registry', () => {
 
 test('a planned recipe is published but refused, not quietly built', () => {
   // publishing them lets the web agent see what is coming; refusing them
-  // stops a brief full of orders that fail one at a time in AE
-  const planned = Object.keys(R.RECIPES).filter((k) => R.RECIPES[k].status === 'planned');
-  assert.ok(planned.length, 'this test is meaningless once everything is built');
-  for (const name of planned) {
-    const res = R.validateProps(name, {});
+  // stops a brief full of orders that fail one at a time in AE.
+  //
+  // Everything in the registry is built today, so the guard is exercised
+  // against an injected entry — the machinery has to keep working for the
+  // NEXT recipe added, which will start its life as planned.
+  R.RECIPES.__NOT_YET__ = {
+    status: 'planned', archetypes: [], summary: '', use: '', techniques: [],
+    params: { thing: { type: 'string', default: '' } },
+  };
+  try {
+    const res = R.validateProps('__NOT_YET__', {});
     assert.equal(res.ok, false);
     assert.match(res.errors.join(' '), /planned, not built/);
+    assert.ok(R.builtRecipes().indexOf('__NOT_YET__') < 0, 'never offered as buildable');
+  } finally {
+    delete R.RECIPES.__NOT_YET__;
   }
 });
+
 
 /* ── the guard ── */
 

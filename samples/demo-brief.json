@@ -60,16 +60,94 @@
       "scriptLine": "Rent takes six thousand, food four thousand two hundred, and you keep the rest.",
       "props": {
         "bars": [
-          { "label": "Rent", "value": 6000 },
-          { "label": "Food", "value": 4200 },
-          { "label": "Transport", "value": 1800 },
-          { "label": "Left over", "value": 484 }
+          {
+            "label": "Rent",
+            "value": 6000
+          },
+          {
+            "label": "Food",
+            "value": 4200
+          },
+          {
+            "label": "Transport",
+            "value": 1800
+          },
+          {
+            "label": "Left over",
+            "value": 484
+          }
         ],
         "accentIndex": 3,
         "caption": "Where 38,000 actually goes",
         "accentColor": "#b8860b"
       },
       "qaFocus": "bars too thin to read, labels arriving before the data",
+      "needs": []
+    },
+    {
+      "id": "demo_05",
+      "archetype": "COMPARISON_PANEL",
+      "recipe": "COMPARISON_PANEL",
+      "technique": "NONE",
+      "durationInFrames": 210,
+      "scriptLine": "You take home eight thousand. Rent alone is eighteen.",
+      "props": {
+        "left": {
+          "title": "YOU TAKE HOME",
+          "value": 8484,
+          "prefix": "Rs ",
+          "unit": "per month"
+        },
+        "right": {
+          "title": "RENT ALONE",
+          "value": 18000,
+          "prefix": "Rs ",
+          "unit": "per month"
+        },
+        "caption": "The gap you are asked to live in",
+        "accentColor": "#8b2e2e"
+      },
+      "note": "the right side arrives second — that is the one the point lands on",
+      "needs": []
+    },
+    {
+      "id": "demo_06",
+      "archetype": "LINE_GRAPH",
+      "recipe": "LINE_GRAPH",
+      "technique": "NONE",
+      "durationInFrames": 240,
+      "scriptLine": "And rent has not stopped climbing since 2021.",
+      "props": {
+        "points": [
+          {
+            "label": "2021",
+            "value": 9000
+          },
+          {
+            "label": "2022",
+            "value": 11000
+          },
+          {
+            "label": "2023",
+            "value": 13500
+          },
+          {
+            "label": "2024",
+            "value": 15500
+          },
+          {
+            "label": "2025",
+            "value": 16800
+          },
+          {
+            "label": "2026",
+            "value": 18000
+          }
+        ],
+        "highlightIndex": 5,
+        "caption": "Average one-bed rent, Lahore",
+        "accentColor": "#b8860b"
+      },
       "needs": []
     }
   ]

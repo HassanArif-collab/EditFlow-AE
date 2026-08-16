@@ -78,31 +78,31 @@ export const RECIPES = {
     },
   },
 
-  /* ── Step 3 of the plan. Published so the web agent can see what is
-     coming; the panel refuses to build these until status flips to built. */
-
   LINE_GRAPH: {
-    status: 'planned',
+    status: 'built',
     archetypes: ['LINE_GRAPH'],
     summary: 'A line drawing on across an axis, with the final value called out.',
     use: 'Something changing over time — inflation, a salary against years.',
     techniques: [],
     params: {
-      points: { type: 'array', required: true, help: 'Array of {label, value}, in order.' },
+      points: { type: 'array', required: true,
+                help: 'Array of {label, value}, in order. Two or more.' },
       caption: { type: 'string', default: '', help: 'One line above the graph.' },
-      highlightIndex: { type: 'number', default: null, help: 'The point the script names.' },
+      highlightIndex: { type: 'number', default: null,
+                        help: 'The point the script names. Defaults to the last one.' },
     },
   },
 
   COMPARISON_PANEL: {
-    status: 'planned',
+    status: 'built',
     archetypes: ['COMPARISON_PANEL'],
     summary: 'Two sides arriving one after the other, so the gap between them reads.',
     use: '"Then versus now", "what you earn versus what rent costs".',
     techniques: ['PUSH_IN'],
     params: {
-      left: { type: 'object', required: true, help: '{title, value, unit}.' },
-      right: { type: 'object', required: true, help: '{title, value, unit}.' },
+      left: { type: 'object', required: true, help: '{title, value, unit, prefix}.' },
+      right: { type: 'object', required: true,
+               help: '{title, value, unit, prefix}. Arrives second — this is the side the point lands on.' },
       caption: { type: 'string', default: '', help: 'One line above both.' },
     },
   },
@@ -117,6 +117,25 @@ export const RECIPES = {
     params: {
       holdAfter: { type: 'number', default: 1.5,
                    help: 'Seconds to hold on the highlighted line after scrolling.' },
+    },
+  },
+
+  PROOF_STACK: {
+    status: 'built',
+    archetypes: ['PROOF_STACK'],
+    summary: 'Several images cut back to back on a rhythm, not one long hold.',
+    use: 'The reveal beat — document, then number, then quote — and any run of ' +
+         'captured evidence. Covers both a 3-shot proof stack and a 12-image montage.',
+    techniques: ['PUSH_IN', 'KEN_BURNS'],
+    needs: 'assets',
+    params: {
+      rhythm: { type: 'enum', default: 'auto', values: ['auto', 'tightening', 'even'],
+                help: 'auto: tighten for a few images, even for many. tightening ' +
+                      'accelerates into the last shot; even is a steady montage.' },
+      holdLast: { type: 'number', default: 0.8,
+                  help: 'Extra seconds on the final image — the one the point lands on.' },
+      zoom: { type: 'number', default: 1.06,
+              help: 'Per-image scale if a technique is set. Small: these are quick cuts.' },
     },
   },
 

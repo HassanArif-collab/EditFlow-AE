@@ -9,8 +9,8 @@ without conflict.
 The panel refuses any recipe not listed here, and any prop that does not
 typecheck, showing you what it refused instead of building something wrong.
 
-**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`
-**Planned:** `LINE_GRAPH`, `COMPARISON_PANEL`
+**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`, `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `PROOF_STACK`, `ASSET_REVEAL`
+**Planned:** 
 
 ## Techniques
 
@@ -38,15 +38,16 @@ A technique a recipe does not honour still builds and shows on the row as
 | `SECTION_TITLE_CARD` | `SECTION_TITLE_CARD` | build in AE now |
 | `STAT_COUNTER` | `STAT_COUNTER` | build in AE now |
 | `BAR_CHART` | `BAR_CHART` | build in AE now |
-| `LINE_GRAPH` | `LINE_GRAPH` | build in AE soon — generate for now |
+| `LINE_GRAPH` | `LINE_GRAPH` | build in AE now |
 | `PIE_CHART` | — | generate it; After Effects has no builder |
-| `COMPARISON_PANEL` | `COMPARISON_PANEL` | build in AE soon — generate for now |
+| `COMPARISON_PANEL` | `COMPARISON_PANEL` | build in AE now |
 | `FLOW_DIAGRAM` | — | generate it; After Effects has no builder |
 | `SCREENSHOT_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
 | `DOC_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
 | `GSAP_METAPHOR` | `ASSET_REVEAL` | build in AE now |
 | `EMOTIONAL_MOMENT` | `ASSET_REVEAL` | build in AE now |
 | `BROLL_VIDEO` | `ASSET_REVEAL` | build in AE now |
+| `PROOF_STACK` | `PROOF_STACK` | build in AE now |
 
 ## Common props
 
@@ -119,6 +120,42 @@ Headline animating letter by letter, with one optional supporting line.
 | `variant` | `slide_up` \| `scale_center` \| `slide_left` \| `fade_rotate` |  | `"slide_up"` | How each letter arrives. |
 | `stagger` | number |  | `0.05` | Seconds between letters. Forced into 0.03–0.10s. _(clamped: letterStagger)_ |
 
+### `LINE_GRAPH`
+
+✅ built
+
+A line drawing on across an axis, with the final value called out.
+
+**Use when:** Something changing over time — inflation, a salary against years.
+
+**Covers archetypes:** `LINE_GRAPH`
+
+**Send `technique`:** `NONE`
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `points` | array | **yes** |  | Array of {label, value}, in order. Two or more. |
+| `caption` | string |  | `""` | One line above the graph. |
+| `highlightIndex` | number |  | — | The point the script names. Defaults to the last one. |
+
+### `COMPARISON_PANEL`
+
+✅ built
+
+Two sides arriving one after the other, so the gap between them reads.
+
+**Use when:** "Then versus now", "what you earn versus what rent costs".
+
+**Covers archetypes:** `COMPARISON_PANEL`
+
+**Send `technique`:** `NONE` or `PUSH_IN`
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `left` | object | **yes** |  | {title, value, unit, prefix}. |
+| `right` | object | **yes** |  | {title, value, unit, prefix}. Arrives second — this is the side the point lands on. |
+| `caption` | string |  | `""` | One line above both. |
+
 ### `DOC_HIGHLIGHT`
 
 ✅ built
@@ -136,6 +173,26 @@ A captured page scrolls to the cited line and highlights it.
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
 | `holdAfter` | number |  | `1.5` | Seconds to hold on the highlighted line after scrolling. |
+
+### `PROOF_STACK`
+
+✅ built
+
+Several images cut back to back on a rhythm, not one long hold.
+
+**Use when:** The reveal beat — document, then number, then quote — and any run of captured evidence. Covers both a 3-shot proof stack and a 12-image montage.
+
+**Covers archetypes:** `PROOF_STACK`
+
+**Send `technique`:** `NONE` or `PUSH_IN` or `KEN_BURNS`
+
+**Requires:** `assets` on the shot.
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `rhythm` | `auto` \| `tightening` \| `even` |  | `"auto"` | auto: tighten for a few images, even for many. tightening accelerates into the last shot; even is a steady montage. |
+| `holdLast` | number |  | `0.8` | Extra seconds on the final image — the one the point lands on. |
+| `zoom` | number |  | `1.06` | Per-image scale if a technique is set. Small: these are quick cuts. |
 
 ### `ASSET_REVEAL`
 
@@ -156,39 +213,3 @@ A finished image or clip, full frame, with a disciplined in and out.
 | `fit` | `fill` \| `contain` |  | `"fill"` | fill crops to frame, contain letterboxes. |
 | `zoom` | number |  | `1.15` | End scale for PUSH_IN / KEN_BURNS / PARALLAX. 1.10-1.35 for evidence. |
 | `hold` | number |  | `0` | Seconds held still before the move starts. 0 means move throughout. |
-
-### `LINE_GRAPH`
-
-⏳ planned — will be refused if ordered
-
-A line drawing on across an axis, with the final value called out.
-
-**Use when:** Something changing over time — inflation, a salary against years.
-
-**Covers archetypes:** `LINE_GRAPH`
-
-**Send `technique`:** `NONE`
-
-| prop | type | required | default | meaning |
-|---|---|---|---|---|
-| `points` | array | **yes** |  | Array of {label, value}, in order. |
-| `caption` | string |  | `""` | One line above the graph. |
-| `highlightIndex` | number |  | — | The point the script names. |
-
-### `COMPARISON_PANEL`
-
-⏳ planned — will be refused if ordered
-
-Two sides arriving one after the other, so the gap between them reads.
-
-**Use when:** "Then versus now", "what you earn versus what rent costs".
-
-**Covers archetypes:** `COMPARISON_PANEL`
-
-**Send `technique`:** `NONE` or `PUSH_IN`
-
-| prop | type | required | default | meaning |
-|---|---|---|---|---|
-| `left` | object | **yes** |  | {title, value, unit}. |
-| `right` | object | **yes** |  | {title, value, unit}. |
-| `caption` | string |  | `""` | One line above both. |

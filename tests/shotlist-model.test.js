@@ -87,7 +87,6 @@ test('invalid JSON reports an error instead of throwing', () => {
 test('unsupported archetypes are reported as skipped, never silently dropped', () => {
   const r = M.parseShotlist(JSON.stringify({ shots: [
     statShot({ value: 1, title: 'a' }),
-    // PIE_CHART has no recipe at all; LINE_GRAPH has one that is not built yet
     { id: 'shot_02', archetype: 'PIE_CHART', durationInFrames: 90, props: {} },
   ] }));
   assert.equal(r.shots.length, 1, 'only the supported shot builds');
@@ -321,9 +320,9 @@ test('recipe wins over archetype, and archetype still works alone', () => {
 });
 
 test('an archetype AE cannot build names itself in the reason', () => {
-  const r = M.normalizeShot({ id: 's', archetype: 'LINE_GRAPH',
-                              props: { points: [{ label: 'a', value: 1 }] } }, { fps: 30 });
-  assert.match(r.error, /LINE_GRAPH/, 'the recipe name alone would not say which shot');
+  // PIE_CHART has no recipe at all — After Effects simply cannot make it
+  const r = M.normalizeShot({ id: 's', archetype: 'PIE_CHART', props: {} }, { fps: 30 });
+  assert.match(r.error, /PIE_CHART/, 'the recipe name alone would not say which shot');
   assert.match(r.error, /generate/);
 });
 

@@ -240,3 +240,56 @@ test('dust drifts upward and blurs, not just fades', () => {
   assert.equal(pos[1], 100, 'full drift at the end');
   assert.equal(blur[0], 100, 'full blur at the end');
 });
+
+/* ── PROOF_STACK rhythm ─────────────────────────────────────────────
+   v7's grammar: the reveal is not one long shot, it is evidence landing
+   back to back with the cut rhythm tightening into the last one. The whole
+   recipe is that rhythm, so the rhythm is what gets tested. */
+
+const slots = (n, total, mode, hold) =>
+  Array.from(sandbox.ef_vis_stackSlots(n, total, mode, hold));
+
+test('a few images tighten into the last one', () => {
+  const s = slots(3, 4, 'auto', 0.8);
+  assert.ok(s[0] > s[1], `${s[0]} should be longer than ${s[1]}`);
+  assert.ok(s[1] > s[2] || Math.abs(s[2] - 0.8) < 0.01, 'accelerating, then the hold');
+  assert.ok(Math.abs(s.reduce((a, b) => a + b, 0) - 4) < 0.01, 'fills the shot exactly');
+});
+
+test('many images run even, with the last one held', () => {
+  const s = slots(12, 6, 'auto', 0.8);
+  const body = s.slice(0, -1);
+  assert.ok(Math.max(...body) - Math.min(...body) < 0.001, 'a steady montage');
+  assert.ok(s[11] > body[0] * 2, 'the point still lands on the final image');
+  assert.ok(Math.abs(s.reduce((a, b) => a + b, 0) - 6) < 0.01);
+});
+
+test('auto switches on the count, and can be overridden', () => {
+  const few = slots(4, 5, 'auto', 0.5);
+  assert.ok(few[0] > few[1], '4 images tighten');
+  const forced = slots(4, 5, 'even', 0);
+  assert.ok(Math.abs(forced[0] - forced[1]) < 1e-9, 'even was asked for and honoured');
+});
+
+test('no image is ever left below the threshold where it cannot be read', () => {
+  // 20 images in 1.5s is not a montage, it is a flicker
+  const s = slots(20, 1.5, 'even', 0);
+  assert.ok(Math.min(...s) >= 0.13, `shortest ${Math.min(...s)}`);
+});
+
+test('a single image just fills the shot', () => {
+  assert.deepEqual(slots(1, 5, 'auto', 0.8), [5]);
+});
+
+test('nonsense input returns nothing rather than NaN slots', () => {
+  assert.equal(slots(0, 5, 'auto', 0).length, 0);
+  assert.equal(slots(3, 0, 'auto', 0).length, 0);
+});
+
+test('slots are always in playable order, never negative', () => {
+  for (const [n, total] of [[2, 3], [5, 8], [8, 4], [12, 20]]) {
+    for (const s of slots(n, total, 'auto', 0.8)) {
+      assert.ok(s > 0, `n=${n} total=${total} produced ${s}`);
+    }
+  }
+});

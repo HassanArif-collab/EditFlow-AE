@@ -57,7 +57,7 @@ const planned = Object.keys(R.RECIPES).filter((k) => R.RECIPES[k].status === 'pl
 const ARCHETYPES = [
   'SECTION_TITLE_CARD', 'STAT_COUNTER', 'BAR_CHART', 'LINE_GRAPH', 'PIE_CHART',
   'COMPARISON_PANEL', 'FLOW_DIAGRAM', 'SCREENSHOT_HIGHLIGHT', 'DOC_HIGHLIGHT',
-  'GSAP_METAPHOR', 'EMOTIONAL_MOMENT', 'BROLL_VIDEO',
+  'GSAP_METAPHOR', 'EMOTIONAL_MOMENT', 'BROLL_VIDEO', 'PROOF_STACK',
 ];
 const mapRows = ARCHETYPES.map((a) => {
   const rec = R.recipeForArchetype(a);

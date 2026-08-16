@@ -608,7 +608,8 @@ var EF_VIS_RECIPES = [
     { name: "LINE_GRAPH",         fn: "ef_vis_buildLineGraph" },
     { name: "COMPARISON_PANEL",   fn: "ef_vis_buildComparisonPanel" },
     { name: "DOC_HIGHLIGHT",      fn: "ef_vis_buildDocHighlight" },
-    { name: "ASSET_REVEAL",       fn: "ef_vis_buildAssetReveal" }
+    { name: "ASSET_REVEAL",       fn: "ef_vis_buildAssetReveal" },
+    { name: "PROOF_STACK",        fn: "ef_vis_buildProofStack" }
 ];
 
 function ef_vis_builderFor(name) {
@@ -673,6 +674,104 @@ function ef_vis_buildAssetReveal(comp, spec, cfg, missing) {
         L.moveToEnd();
         placed++;
     }
+    return placed;
+}
+
+/* ── PROOF_STACK ───────────────────────────────────────────
+   v7's own grammar: the reveal is not one long shot, it is evidence landing
+   back to back — document, number, quote — with the cut rhythm tightening
+   into the last one. The same builder covers a fast montage of a dozen
+   captured images, because the only real difference is the rhythm.
+
+   Hard cuts, never crossfades. A dissolve between evidence reads as
+   "these are vaguely related"; a cut reads as "and another, and another". */
+
+/**
+ * Slot durations for n images across `total` seconds.
+ *
+ * tightening: each cut shorter than the last, accelerating into the final
+ *   image, which then holds — the shape of an argument landing.
+ * even: a steady montage. Below ~0.13s an image cannot be read at all, so
+ *   the slots are floored and the count is what gives way, not legibility.
+ */
+function ef_vis_stackSlots(n, total, rhythm, holdLast) {
+    var out = [], i;
+    if (n <= 0 || total <= 0) return out;
+    var hold = Math.max(0, holdLast || 0);
+    var mode = String(rhythm || "auto");
+    if (mode === "auto") mode = (n <= 5) ? "tightening" : "even";
+
+    if (n === 1) return [total];
+
+    if (mode === "tightening") {
+        // geometric shrink; solve the ratio so the slots fill the time left
+        var body = Math.max(0.1, total - hold);
+        var ratio = 0.72, weights = [], sum = 0;
+        for (i = 0; i < n - 1; i++) { var w = Math.pow(ratio, i); weights.push(w); sum += w; }
+        for (i = 0; i < n - 1; i++) out.push(body * weights[i] / sum);
+        out.push(hold > 0 ? hold : body * weights[n - 2] / sum);
+    } else {
+        var each = total / n;
+        for (i = 0; i < n; i++) out.push(each);
+        if (hold > 0 && n > 1) {
+            // borrow the hold from the others so the last image lands
+            var take = Math.min(hold, each * (n - 1) * 0.5) / (n - 1);
+            for (i = 0; i < n - 1; i++) out[i] -= take;
+            out[n - 1] += take * (n - 1);
+        }
+    }
+
+    // below this an image is a flicker, not evidence
+    for (i = 0; i < out.length; i++) if (out[i] < 0.13) out[i] = 0.13;
+    return out;
+}
+
+function ef_vis_buildProofStack(comp, spec, cfg, missing) {
+    var names = spec.assets && spec.assets.length ? spec.assets : [];
+    if (!names.length) {
+        ef_vis_placeholderSolid(comp, "PROOF_STACK needs assets for " + spec.id);
+        missing.push("(no assets named)");
+        return 1;
+    }
+
+    var slots = ef_vis_stackSlots(names.length, comp.duration,
+                                  spec.rhythm || "auto", spec.holdLast);
+    var need = 0, k;
+    for (k = 0; k < slots.length; k++) need += slots[k];
+    if (need > comp.duration + 0.01) {
+        // an image under ~0.13s cannot be read, so the count gives way, not
+        // legibility — say which images will not make it rather than clip
+        // them off the end in silence
+        var fits = 0, acc = 0;
+        for (k = 0; k < slots.length; k++) { acc += slots[k]; if (acc <= comp.duration) fits++; }
+        missing.push("shot is " + comp.duration.toFixed(1) + "s but " + names.length +
+                     " images need " + need.toFixed(1) + "s — only " + fits +
+                     " will be seen; lengthen the shot or send fewer");
+    }
+    var t = 0, placed = 0, applied = "";
+
+    for (var i = 0; i < names.length; i++) {
+        var item = ef_vis_importAsset(names[i], cfg, spec, false);
+        var L;
+        if (!item) {
+            missing.push(String(names[i]));
+            L = ef_vis_placeholderSolid(comp, names[i]);
+        } else {
+            L = comp.layers.add(item);
+            L.name = (i + 1) + ". " + String(names[i]);
+            ef_vis_fitLayer(L, comp, spec.fit || "fill");
+            placed++;
+        }
+        // hard cut: each image occupies its slot alone
+        L.startTime = 0;
+        L.inPoint = t;
+        L.outPoint = Math.min(comp.duration, t + slots[i]);
+        applied = ef_vis_applyTechnique(L, comp, spec, {
+            scalable: true, zoom: spec.zoom || 1.06, dur: slots[i],
+        }) || applied;
+        t += slots[i];
+    }
+    spec._techniqueApplied = applied;
     return placed;
 }
 
@@ -762,6 +861,193 @@ function ef_vis_buildDocHighlight(comp, spec, cfg, missing) {
     hl.property("Anchor Point").setValue([-hw / 2, 0]);
     hl.property("Position").setValue([hlX - hw / 2, comp.height / 2]);
     return 2;
+}
+
+/* ── LINE_GRAPH ────────────────────────────────────────────
+   Something changing over time. Axis first, then the line draws on left to
+   right with Trim Paths, then the point the script names is called out.
+   Same discipline as the bar chart: the data is readable before any label
+   arrives to explain it. */
+function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
+    ef_vis_addBackground(comp, spec, cfg, missing);
+
+    var pts = spec.points || [];
+    var n = pts.length;
+    if (n < 2) { ef_vis_placeholderSolid(comp, "LINE_GRAPH needs 2+ points"); return 1; }
+
+    var plotW = comp.width * 0.72, plotH = comp.height * 0.42;
+    var left = (comp.width - plotW) / 2, baseY = comp.height * 0.74;
+    var maxV = 0, minV = 0, i;
+    for (i = 0; i < n; i++) {
+        var v = Number(pts[i].value) || 0;
+        if (i === 0 || v > maxV) maxV = v;
+        if (i === 0 || v < minV) minV = v;
+    }
+    if (minV > 0) minV = 0;                      // a value axis that lies is worse than a long one
+    var span = (maxV - minV) || 1;
+
+    // axis
+    var axis = comp.layers.addShape();
+    axis.name = "Axis";
+    var ag = axis.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                 .property("ADBE Vectors Group");
+    var ar = ag.addProperty("ADBE Vector Shape - Rect");
+    ar.property("ADBE Vector Rect Size").setValue([plotW, 3]);
+    ar.property("ADBE Vector Rect Position").setValue([0, 0]);
+    ag.addProperty("ADBE Vector Graphic - Fill")
+      .property("ADBE Vector Fill Color").setValue([0.45, 0.48, 0.55]);
+    axis.property("Position").setValue([comp.width / 2, baseY]);
+    axis.property("Scale").expression =
+        "var t=time-inPoint;var p=(t<=0)?0:((t>=0.4)?1:easeOut(t,0,0.4,0,1));[p*100,100]";
+
+    // the line itself, as a path drawn on with Trim Paths
+    var verts = [];
+    for (i = 0; i < n; i++) {
+        var x = left + (plotW * i / (n - 1)) - comp.width / 2;
+        var y = baseY - (((Number(pts[i].value) || 0) - minV) / span) * plotH - comp.height / 2;
+        verts.push([x, y]);
+    }
+    var line = comp.layers.addShape();
+    line.name = "Line";
+    var lg = line.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                 .property("ADBE Vectors Group");
+    var shape = new Shape();
+    shape.vertices = verts;
+    shape.closed = false;
+    lg.addProperty("ADBE Vector Shape - Group")
+      .property("ADBE Vector Shape").setValue(shape);
+    var stroke = lg.addProperty("ADBE Vector Graphic - Stroke");
+    stroke.property("ADBE Vector Stroke Color").setValue(spec.accent || [0.72, 0.53, 0.04]);
+    stroke.property("ADBE Vector Stroke Width").setValue(Math.max(3, comp.height * 0.005));
+    line.property("Position").setValue([comp.width / 2, comp.height / 2]);
+
+    var trim = line.property("ADBE Root Vectors Group").addProperty("ADBE Vector Filter - Trim");
+    var drawDur = Math.max(0.6, Math.min(2.4, comp.duration * 0.45));
+    trim.property("ADBE Vector Trim End").expression =
+        "var t=time-inPoint-0.35;var d=" + drawDur + ";" +
+        "t<=0?0:(t>=d?100:easeOut(t,0,d,0,100))";
+
+    // the point the narration names
+    var hi = Number(spec.highlightIndex);
+    if (!isFinite(hi) || hi < 0 || hi >= n) hi = n - 1;
+    var dot = comp.layers.addShape();
+    dot.name = "Callout";
+    var dg = dot.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                .property("ADBE Vectors Group");
+    var el = dg.addProperty("ADBE Vector Shape - Ellipse");
+    var r = Math.max(8, comp.height * 0.012);
+    el.property("ADBE Vector Ellipse Size").setValue([r * 2, r * 2]);
+    dg.addProperty("ADBE Vector Graphic - Fill")
+      .property("ADBE Vector Fill Color").setValue(spec.accent || [0.72, 0.53, 0.04]);
+    dot.property("Position").setValue([verts[hi][0] + comp.width / 2, verts[hi][1] + comp.height / 2]);
+    var dotAt = 0.35 + drawDur * (hi / (n - 1));
+    dot.property("Scale").expression =
+        "var t=time-inPoint-" + dotAt + ";" +
+        "if(t<=0){[0,0]}else{var p=(t>=0.35)?1:easeOut(t,0,0.35,0,1);[p*100,p*100]}";
+
+    var val = comp.layers.addText(ef_vis_groupDigits(Number(pts[hi].value) || 0));
+    val.name = "Callout value";
+    ef_vis_styleText(val, cfg, spec, Math.round(comp.height * 0.038), [1, 1, 1]);
+    ef_vis_centerAnchor(val, comp,
+        (verts[hi][0] + comp.width / 2) / comp.width,
+        (verts[hi][1] + comp.height / 2 - comp.height * 0.055) / comp.height, 0.1);
+    val.property("Opacity").expression =
+        "var t=time-inPoint-" + (dotAt + 0.2) + ";t<0?0:(t>=0.35?100:easeOut(t,0,0.35,0,100))";
+
+    // labels last, once the shape of the data is already readable
+    for (i = 0; i < n; i++) {
+        if (!pts[i].label) continue;
+        var lab = comp.layers.addText(String(pts[i].label));
+        lab.name = "Label " + (i + 1);
+        ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.026), [0.78, 0.81, 0.86]);
+        ef_vis_centerAnchor(lab, comp,
+            (verts[i][0] + comp.width / 2) / comp.width,
+            (baseY + comp.height * 0.05) / comp.height, 0.1);
+        lab.property("Opacity").expression =
+            "var t=time-inPoint-" + (0.35 + drawDur + 0.1) + ";" +
+            "t<0?0:(t>=0.35?100:easeOut(t,0,0.35,0,100))";
+    }
+
+    if (spec.caption) {
+        var cap = comp.layers.addText(String(spec.caption));
+        cap.name = "Caption";
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_centerAnchor(cap, comp, 0.5, 0.16, 0.1);
+        ef_vis_fitText(cap, comp, cfg, 0.1);
+    }
+    return 1;
+}
+
+/* ── COMPARISON_PANEL ──────────────────────────────────────
+   Two sides, the second arriving after the first so the gap between them
+   is felt rather than just shown. "What you earn" then "what rent costs". */
+function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
+    ef_vis_addBackground(comp, spec, cfg, missing);
+
+    var sides = [spec.left || {}, spec.right || {}];
+    var gap = 0.9;                                  // seconds before the second lands
+
+    for (var i = 0; i < 2; i++) {
+        var s = sides[i];
+        var cx = (i === 0) ? 0.28 : 0.72;
+        var at = i * gap;
+        var accent = (i === 1) ? (spec.accent || [0.72, 0.53, 0.04]) : [0.62, 0.66, 0.72];
+
+        if (s.title) {
+            var t = comp.layers.addText(String(s.title));
+            t.name = (i ? "Right" : "Left") + " title";
+            ef_vis_styleText(t, cfg, spec, Math.round(comp.height * 0.040), accent);
+            ef_vis_centerAnchor(t, comp, cx, 0.38, 0.1);
+            ef_vis_fitText(t, comp, cfg, 0.1);
+            t.property("Opacity").expression =
+                "var t=time-inPoint-" + at + ";t<0?0:(t>=0.4?100:easeOut(t,0,0.4,0,100))";
+        }
+
+        var num = comp.layers.addText("0");
+        num.name = (i ? "Right" : "Left") + " value";
+        ef_vis_styleText(num, cfg, spec, Math.round(comp.height * 0.11),
+                         (i === 1) ? [1, 1, 1] : [0.82, 0.85, 0.9]);
+        var cd = Math.max(1.2, Math.min(2.4, comp.duration * 0.35));
+        num.property("Source Text").expression =
+            ef_vis_countExpr(Number(s.value) || 0, cd, String(s.prefix || ""), "")
+              .replace("var t=time-inPoint;", "var t=time-inPoint-" + at + ";");
+        var landed = Math.min(comp.duration - 0.01, at + cd + 0.1);
+        ef_vis_centerAnchor(num, comp, cx, 0.52, landed);
+        ef_vis_fitText(num, comp, cfg, landed);
+        num.property("Opacity").expression =
+            "var t=time-inPoint-" + at + ";t<0?0:100";
+
+        if (s.unit) {
+            var u = comp.layers.addText(String(s.unit));
+            u.name = (i ? "Right" : "Left") + " unit";
+            ef_vis_styleText(u, cfg, spec, Math.round(comp.height * 0.028), [0.72, 0.75, 0.8]);
+            ef_vis_centerAnchor(u, comp, cx, 0.63, 0.1);
+            u.property("Opacity").expression =
+                "var t=time-inPoint-" + (at + cd * 0.8) + ";t<0?0:(t>=0.4?70:easeOut(t,0,0.4,0,70))";
+        }
+    }
+
+    // a divider, so the two sides read as a comparison and not two shots
+    var rule = comp.layers.addShape();
+    rule.name = "Divider";
+    var rg = rule.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                 .property("ADBE Vectors Group");
+    var rr = rg.addProperty("ADBE Vector Shape - Rect");
+    rr.property("ADBE Vector Rect Size").setValue([2, comp.height * 0.30]);
+    rg.addProperty("ADBE Vector Graphic - Fill")
+      .property("ADBE Vector Fill Color").setValue([0.35, 0.38, 0.45]);
+    rule.property("Position").setValue([comp.width / 2, comp.height * 0.50]);
+    rule.property("Scale").expression =
+        "var t=time-inPoint-0.3;var p=(t<=0)?0:((t>=0.5)?1:easeOut(t,0,0.5,0,1));[100,p*100]";
+
+    if (spec.caption) {
+        var cap = comp.layers.addText(String(spec.caption));
+        cap.name = "Caption";
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_centerAnchor(cap, comp, 0.5, 0.18, 0.1);
+        ef_vis_fitText(cap, comp, cfg, 0.1);
+    }
+    return 1;
 }
 
 /* ── build one shot ────────────────────────────────────────

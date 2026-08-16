@@ -1,0 +1,76 @@
+{
+  "_comment": "Load this in the Visuals tab to see every recipe that needs no files on disk. Built at 1920x1080 @ 30fps regardless of which comp you have open.",
+  "shots": [
+    {
+      "id": "demo_01",
+      "archetype": "SECTION_TITLE_CARD",
+      "recipe": "SECTION_TITLE_CARD",
+      "technique": "NONE",
+      "durationInFrames": 120,
+      "scriptLine": "So can you actually survive on thirty-eight thousand?",
+      "props": {
+        "title": "38,000 IN 2026",
+        "supporting": "Can you survive on it?",
+        "variant": "slide_up",
+        "accentColor": "#b8860b"
+      },
+      "needs": []
+    },
+    {
+      "id": "demo_02",
+      "archetype": "STAT_COUNTER",
+      "recipe": "STAT_COUNTER",
+      "technique": "NONE",
+      "durationInFrames": 150,
+      "scriptLine": "After deductions the take-home is eight thousand four hundred and eighty-four.",
+      "props": {
+        "value": 8484,
+        "title": "TAKE HOME",
+        "prefix": "Rs ",
+        "unit": "per month",
+        "pulse": true,
+        "accentColor": "#b8860b"
+      },
+      "qaFocus": "illegible number, fake urgency, count too fast",
+      "needs": []
+    },
+    {
+      "id": "demo_03",
+      "archetype": "STAT_COUNTER",
+      "recipe": "STAT_COUNTER",
+      "technique": "DUST_DISSOLVE",
+      "durationInFrames": 180,
+      "scriptLine": "And by the end of the month, all of it is gone.",
+      "props": {
+        "value": 8484,
+        "title": "WHAT IS LEFT",
+        "prefix": "Rs ",
+        "pulse": false,
+        "accentColor": "#8b2e2e"
+      },
+      "note": "the number crumbles as the line says it is gone — this is DUST_DISSOLVE doing its job",
+      "needs": []
+    },
+    {
+      "id": "demo_04",
+      "archetype": "BAR_CHART",
+      "recipe": "BAR_CHART",
+      "technique": "NONE",
+      "durationInFrames": 210,
+      "scriptLine": "Rent takes six thousand, food four thousand two hundred, and you keep the rest.",
+      "props": {
+        "bars": [
+          { "label": "Rent", "value": 6000 },
+          { "label": "Food", "value": 4200 },
+          { "label": "Transport", "value": 1800 },
+          { "label": "Left over", "value": 484 }
+        ],
+        "accentIndex": 3,
+        "caption": "Where 38,000 actually goes",
+        "accentColor": "#b8860b"
+      },
+      "qaFocus": "bars too thin to read, labels arriving before the data",
+      "needs": []
+    }
+  ]
+}

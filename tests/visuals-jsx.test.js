@@ -141,3 +141,102 @@ test('jsx version naming matches the panel model', () => {
                  M.nextVersionName('shot_01', names), JSON.stringify(names));
   }
 });
+
+/* ── Step 3 techniques ──────────────────────────────────────────────
+   Every one of these multiplies `value` rather than assuming 100. The
+   counter's pulse taught that lesson: it hardcoded [100,100] and silently
+   threw away the auto-fit that had just shrunk a long number to fit the
+   frame. A technique that resets scale is a technique that un-does the
+   recipe underneath it. */
+
+const runExpr = (expr, ctx) => vm.runInNewContext(expr, aeCtx(ctx));
+
+test('PUSH_IN starts at the fitted scale, not at 100', () => {
+  // the layer was fitted to 62% to fill the frame; the push must build on it
+  const e = sandbox.ef_vis_pushExpr(1.2, 0, 5, 1);
+  const at0 = runExpr(e, { time: 10, inPoint: 10, value: [62, 62] });
+  assert.equal(at0[0], 62, 'a hardcoded 100 here would pop the frame');
+  assert.equal(at0[1], 62);
+});
+
+test('PUSH_IN reaches exactly the requested zoom', () => {
+  const e = sandbox.ef_vis_pushExpr(1.2, 0, 5, 1);
+  const end = runExpr(e, { time: 15, inPoint: 10, value: [100, 100] });
+  assert.ok(Math.abs(end[0] - 120) < 0.001, `got ${end[0]}`);
+  assert.equal(end[0], end[1], 'uniform — a non-square push distorts the picture');
+});
+
+test('PUSH_IN only moves forward', () => {
+  const e = sandbox.ef_vis_pushExpr(1.3, 0, 4, 1);
+  let prev = 0;
+  for (let t = 0; t <= 4; t += 0.5) {
+    const s = runExpr(e, { time: 10 + t, inPoint: 10, value: [100, 100] })[0];
+    assert.ok(s >= prev - 1e-9, `scale went backwards at t=${t}`);
+    prev = s;
+  }
+});
+
+test('a hold keeps the frame still before the move starts', () => {
+  const e = sandbox.ef_vis_pushExpr(1.2, 1.5, 3, 1);
+  assert.equal(runExpr(e, { time: 11, inPoint: 10, value: [100, 100] })[0], 100);
+  const after = runExpr(e, { time: 14.5, inPoint: 10, value: [100, 100] })[0];
+  assert.ok(Math.abs(after - 120) < 0.001, `got ${after}`);
+});
+
+test('PARALLAX rates give the foreground more travel than the background', () => {
+  // v7: bg 0.5, mid 1.0, fg 1.5 — depth is the difference between them
+  const at = (rate) => runExpr(sandbox.ef_vis_pushExpr(1.2, 0, 5, rate),
+                               { time: 15, inPoint: 10, value: [100, 100] })[0];
+  const bg = at(0.5), mid = at(1.0), fg = at(1.5);
+  assert.ok(bg < mid && mid < fg, `${bg} < ${mid} < ${fg}`);
+  assert.ok(Math.abs(bg - 110) < 0.001, 'half the zoom');
+  assert.ok(Math.abs(fg - 130) < 0.001, 'one and a half times it');
+});
+
+test('KEN_BURNS drift starts where the layer was and moves a bounded distance', () => {
+  const e = sandbox.ef_vis_driftExpr({ width: 1920, height: 1080 }, 0, 5, 58, -22);
+  const start = runExpr(e, { time: 10, inPoint: 10, value: [960, 540] });
+  assert.equal(start[0], 960);
+  assert.equal(start[1], 540);
+  const end = runExpr(e, { time: 15, inPoint: 10, value: [960, 540] });
+  assert.ok(Math.abs(end[0] - 1018) < 0.001);
+  assert.ok(Math.abs(end[1] - 518) < 0.001);
+});
+
+/* ── DUST_DISSOLVE — it means loss, so the letters must actually leave ── */
+
+test('dust holds the text fully solid until its start time', () => {
+  const p = sandbox.ef_vis_dustExpr(2, 0.04, 1.0, 8, true);
+  const opacity = runExpr(p + '(1-p)*100;', { time: 11, inPoint: 10, textIndex: 1 });
+  assert.equal(opacity, 100, 'crumbling before the narration says so is nonsense');
+});
+
+test('dust ends with every letter gone', () => {
+  const p = sandbox.ef_vis_dustExpr(2, 0.04, 1.0, 8, true);
+  for (const textIndex of [1, 4, 8]) {
+    const o = runExpr(p + '(1-p)*100;', { time: 20, inPoint: 10, textIndex });
+    assert.equal(o, 0, `letter ${textIndex} never left`);
+  }
+});
+
+test('rtl dissolves the last letter first — deletion order, not reading order', () => {
+  const p = sandbox.ef_vis_dustExpr(2, 0.1, 0.6, 8, true);
+  const at = (i) => runExpr(p + 'p;', { time: 12.35, inPoint: 10, textIndex: i });
+  assert.ok(at(8) > at(1), 'rtl: the end of the number goes first');
+});
+
+test('ltr dissolves the first letter first', () => {
+  const p = sandbox.ef_vis_dustExpr(2, 0.1, 0.6, 8, false);
+  const at = (i) => runExpr(p + 'p;', { time: 12.35, inPoint: 10, textIndex: i });
+  assert.ok(at(1) > at(8), 'ltr: reading order');
+});
+
+test('dust drifts upward and blurs, not just fades', () => {
+  // fade alone reads as a dip to black; the drift and blur are what make it
+  // read as crumbling
+  const p = sandbox.ef_vis_dustExpr(0, 0.05, 1.0, 4, true);
+  const pos = runExpr(p + '[0,p*100,0];', { time: 20, inPoint: 10, textIndex: 1 });
+  const blur = runExpr(p + '[p*100,p*100];', { time: 20, inPoint: 10, textIndex: 1 });
+  assert.equal(pos[1], 100, 'full drift at the end');
+  assert.equal(blur[0], 100, 'full blur at the end');
+});

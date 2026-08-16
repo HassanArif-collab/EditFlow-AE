@@ -28,10 +28,10 @@ export const RECIPES = {
     archetypes: ['STAT_COUNTER'],
     summary: 'One number counting up from zero, label above, unit below.',
     use: 'A single figure the narration says out loud and wants to land.',
-    // No techniques: this builder has fixed motion and does not read
-    // spec.technique. Listing one here would have the web agent sending
-    // motion the panel silently ignores.
-    techniques: [],
+    // The count itself is intrinsic; DUST_DISSOLVE is the one shot-level
+    // motion that fits a number — the figure crumbling as it is described
+    // as lost. It reads as meaning, so it is never decoration.
+    techniques: ['DUST_DISSOLVE'],
     params: {
       value: { type: 'number', required: true, help: 'The number it counts to.' },
       title: { type: 'string', default: '', help: 'Label above the number.' },
@@ -66,7 +66,7 @@ export const RECIPES = {
     archetypes: ['SECTION_TITLE_CARD'],
     summary: 'Headline animating letter by letter, with one optional supporting line.',
     use: 'A chapter break, or the line that names what follows.',
-    techniques: [],
+    techniques: ['DUST_DISSOLVE'],
     params: {
       title: { type: 'string', required: true, help: 'The headline.' },
       supporting: { type: 'string', default: '', help: 'One smaller line beneath it.' },
@@ -108,7 +108,7 @@ export const RECIPES = {
   },
 
   DOC_HIGHLIGHT: {
-    status: 'planned',
+    status: 'built',
     archetypes: ['DOC_HIGHLIGHT', 'SCREENSHOT_HIGHLIGHT'],
     summary: 'A captured page scrolls to the cited line and highlights it.',
     use: 'Showing the source you are quoting. Needs `sourceAnchor` on the shot.',
@@ -121,15 +121,19 @@ export const RECIPES = {
   },
 
   ASSET_REVEAL: {
-    status: 'planned',
+    status: 'built',
     archetypes: ['BROLL_VIDEO', 'GSAP_METAPHOR', 'EMOTIONAL_MOMENT'],
     summary: 'A finished image or clip, full frame, with a disciplined in and out.',
     use: 'Anything generated or captured elsewhere. Carries the generated and captured routes.',
-    techniques: ['KEN_BURNS', 'PUSH_IN'],
+    techniques: ['KEN_BURNS', 'PUSH_IN', 'PARALLAX_2_5D'],
     needs: 'assets',
     params: {
       fit: { type: 'enum', default: 'fill', values: ['fill', 'contain'],
              help: 'fill crops to frame, contain letterboxes.' },
+      zoom: { type: 'number', default: 1.15,
+              help: 'End scale for PUSH_IN / KEN_BURNS / PARALLAX. 1.10-1.35 for evidence.' },
+      hold: { type: 'number', default: 0,
+              help: 'Seconds held still before the move starts. 0 means move throughout.' },
     },
   },
 };
@@ -139,7 +143,24 @@ export const RECIPES = {
    motion", which is what the text and data recipes want, since their motion is
    intrinsic. Send NONE rather than omitting the field, so a missing technique
    is distinguishable from a deliberate still. */
-export const TECHNIQUES = ['NONE', 'PUSH_IN', 'KEN_BURNS', 'DOC_SCROLL', 'PARALLAX_2_5D'];
+export const TECHNIQUES = ['NONE', 'PUSH_IN', 'KEN_BURNS', 'DOC_SCROLL',
+                           'PARALLAX_2_5D', 'DUST_DISSOLVE'];
+
+/* What each one means, quoted to the panel and the docs so the web agent and
+   the builder cannot hold different ideas of the same word. Sourced from
+   v7/technique_deck.md. */
+export const TECHNIQUE_HELP = {
+  NONE: 'No shot-level motion. The recipe\'s own animation is the whole of it.',
+  PUSH_IN: 'A slow scale toward the subject over the hold. Quiet emphasis.',
+  KEN_BURNS: 'Scale plus a slow drift across a still, so a photograph feels filmed.',
+  DOC_SCROLL: 'Scroll a tall capture to the cited line, then hold on it.',
+  PARALLAX_2_5D: 'Layered depth: background, middle and foreground move at ' +
+                 'different rates during a push. Needs assets exported as ' +
+                 'separate layers, back to front.',
+  DUST_DISSOLVE: 'Letters crumble away — fade, blur and drift upward in ' +
+                 'sequence. It MEANS loss: something erased, deleted or gone. ' +
+                 'Never a neutral transition.',
+};
 
 /* Every recipe takes these too — they are set on the shot, not inside props. */
 export const COMMON_PARAMS = {

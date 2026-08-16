@@ -88,11 +88,13 @@ The whole vocabulary: ${R.TECHNIQUES.map((t) => `\`${t}\``).join(', ')}.
   ? R.honouredTechniques().map((t) => `\`${t}\``).join(', ')
   : '\`NONE\` only.'}
 
-The motion techniques belong to the still-image recipes, which are all still
-planned. The three built recipes carry their motion intrinsically and have no
-shot-level hook, so **send them \`NONE\`** — each recipe below states what it
-accepts. Anything a recipe does not honour still builds, and shows on the row
-as **not applied** rather than being silently dropped.
+Not every recipe accepts every technique — a bar chart has nowhere to put a
+Ken Burns drift. **Each recipe below states exactly what to send it**, and the
+answer is \`NONE\` wherever the recipe's own animation is the whole of it.
+A technique a recipe does not honour still builds and shows on the row as
+**not applied**, never silently dropped.
+
+${R.TECHNIQUES.map((t) => `- \`${t}\` — ${R.TECHNIQUE_HELP[t]}`).join('\n')}
 
 ## Archetype → recipe
 

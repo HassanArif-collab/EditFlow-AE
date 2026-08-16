@@ -359,3 +359,88 @@ test('no visuals root set is a clear refusal, not an empty result', () => {
     assert.match(sandbox.ef_vis_scanAssets('{"root":"G:/nope","dirs":[]}'), /^ERROR:.*not found/);
   });
 });
+
+/* ── DOC_HIGHLIGHT refuses a mis-sized capture ──────────────────────
+   `rect` is in the pixels of the original capture. If the PNG on disk was
+   resized or re-exported, the highlight lands on a different paragraph —
+   and that reads to a viewer as a research error, not a scaling bug. The
+   schema promises a refusal; this is that promise, tested. */
+
+function withCapture(imageDims, fn) {
+  const m = mockAE({});
+  // AE's property chains nest arbitrarily deep (Root Vectors Group ->
+  // Vector Group -> Vectors Group -> Rect -> Rect Size). One recursive stub
+  // beats guessing the exact depth each builder walks.
+  const anyProp = () => {
+    const node = {
+      setValue() {}, moveToEnd() {}, name: '',
+      property: () => anyProp(), addProperty: () => anyProp(),
+      sourceRectAtTime: () => ({ left: 0, top: 0, width: 100, height: 20 }),
+    };
+    Object.defineProperty(node, 'expression', { get: () => '', set: () => {} });
+    return node;
+  };
+  const layer = () => Object.assign(anyProp(), { source: { width: 1280, height: 6461 } });
+  const comp = {
+    width: 1920, height: 1080, duration: 8,
+    layers: { add: layer, addShape: layer, addSolid: layer },
+  };
+  sandbox.app = m.app;
+  sandbox.FolderItem = m.FolderItem;
+  sandbox.CompItem = m.CompItem;
+  sandbox.BlendingMode = { MULTIPLY: 'multiply' };
+  sandbox.ImportOptions = function () {};
+  sandbox.File = function (p) { this.fsName = String(p); this.exists = true; };
+  m.app.project.importFile = () => Object.assign({ name: 'fullpage.png' }, imageDims);
+  try { return fn(comp); } finally {
+    delete sandbox.app; delete sandbox.FolderItem; delete sandbox.CompItem;
+    delete sandbox.BlendingMode; delete sandbox.ImportOptions; delete sandbox.File;
+  }
+}
+
+const SPEC = () => ({
+  id: 'shot_05', recipe: 'DOC_HIGHLIGHT', assetDir: 'assets/a',
+  accent: [0.9, 0.8, 0.2], holdAfter: 1.5, technique: 'DOC_SCROLL',
+  sourceAnchor: {
+    url: 'https://www.dawn.com/news/2011436',
+    image: 'assets/_captures/dawn-com-2011436/fullpage.png',
+    pageWidth: 1280, pageHeight: 6461, imageWidth: 1280, imageHeight: 6461,
+    rect: { x: 108, y: 1632, w: 728, h: 92 },
+  },
+});
+
+test('a capture matching the declared size builds', () => {
+  withCapture({ width: 1280, height: 6461 }, (comp) => {
+    const out = sandbox.ef_vis_buildDocHighlight(comp, SPEC(), { visualsRoot: 'G:/vis' }, []);
+    assert.ok(typeof out !== 'string', `refused a good capture: ${out}`);
+  });
+});
+
+test('a resized capture is refused, naming both sizes', () => {
+  withCapture({ width: 640, height: 3230 }, (comp) => {
+    const out = sandbox.ef_vis_buildDocHighlight(comp, SPEC(), { visualsRoot: 'G:/vis' }, []);
+    assert.match(String(out), /^ERROR:/);
+    assert.match(String(out), /640x3230/, 'says what it found');
+    assert.match(String(out), /1280x6461/, 'and what it expected');
+    assert.match(String(out), /wrong line/, 'and why that matters');
+  });
+});
+
+test('a shot with no sourceAnchor is refused rather than building an empty page', () => {
+  withCapture({ width: 1280, height: 6461 }, (comp) => {
+    const spec = SPEC();
+    delete spec.sourceAnchor;
+    assert.match(String(sandbox.ef_vis_buildDocHighlight(comp, spec, { visualsRoot: 'G:/vis' }, [])),
+                 /needs sourceAnchor/);
+  });
+});
+
+test('a capture that is not on disk is reported as missing, not as a size error', () => {
+  withCapture({ width: 1280, height: 6461 }, (comp) => {
+    sandbox.File = function (p) { this.fsName = String(p); this.exists = false; };
+    const missing = [];
+    const out = sandbox.ef_vis_buildDocHighlight(comp, SPEC(), { visualsRoot: 'G:/vis' }, missing);
+    assert.ok(typeof out !== 'string', 'a missing file is a placeholder, not a refusal');
+    assert.deepEqual(missing, ['assets/_captures/dawn-com-2011436/fullpage.png']);
+  });
+});

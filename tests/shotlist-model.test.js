@@ -87,11 +87,12 @@ test('invalid JSON reports an error instead of throwing', () => {
 test('unsupported archetypes are reported as skipped, never silently dropped', () => {
   const r = M.parseShotlist(JSON.stringify({ shots: [
     statShot({ value: 1, title: 'a' }),
-    { id: 'shot_02', archetype: 'BROLL_VIDEO', durationInFrames: 90, props: {} },
+    // PIE_CHART has no recipe at all; LINE_GRAPH has one that is not built yet
+    { id: 'shot_02', archetype: 'PIE_CHART', durationInFrames: 90, props: {} },
   ] }));
   assert.equal(r.shots.length, 1, 'only the supported shot builds');
   assert.equal(r.skipped.length, 1);
-  assert.match(r.skipped[0], /BROLL_VIDEO/);
+  assert.match(r.skipped[0], /PIE_CHART/);
 });
 
 test('one broken shot does not lose the others', () => {
@@ -302,9 +303,14 @@ test('the defaults are the safe ones', () => {
 });
 
 test('a technique outside the agreed list becomes NONE and says so', () => {
-  const { spec } = one({ technique: 'DUST_DISSOLVE' });
+  const { spec } = one({ technique: 'LIQUID_POSTER_TYPE' });
   assert.equal(spec.technique, 'NONE');
-  assert.match(spec.warnings.join(' '), /DUST_DISSOLVE/);
+  assert.match(spec.warnings.join(' '), /LIQUID_POSTER_TYPE/);
+});
+
+test('DUST_DISSOLVE is in the vocabulary and survives onto the shot', () => {
+  // it means loss — a number crumbling as the narration says it vanished
+  assert.equal(one({ technique: 'DUST_DISSOLVE' }).spec.technique, 'DUST_DISSOLVE');
 });
 
 test('recipe wins over archetype, and archetype still works alone', () => {
@@ -315,8 +321,9 @@ test('recipe wins over archetype, and archetype still works alone', () => {
 });
 
 test('an archetype AE cannot build names itself in the reason', () => {
-  const r = M.normalizeShot({ id: 's', archetype: 'BROLL_VIDEO', props: {} }, { fps: 30 });
-  assert.match(r.error, /BROLL_VIDEO/, 'ASSET_REVEAL alone would not say which shot');
+  const r = M.normalizeShot({ id: 's', archetype: 'LINE_GRAPH',
+                              props: { points: [{ label: 'a', value: 1 }] } }, { fps: 30 });
+  assert.match(r.error, /LINE_GRAPH/, 'the recipe name alone would not say which shot');
   assert.match(r.error, /generate/);
 });
 

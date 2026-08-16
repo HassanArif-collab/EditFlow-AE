@@ -9,20 +9,27 @@ without conflict.
 The panel refuses any recipe not listed here, and any prop that does not
 typecheck, showing you what it refused instead of building something wrong.
 
-**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`
-**Planned:** `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`
+**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`
+**Planned:** `LINE_GRAPH`, `COMPARISON_PANEL`
 
 ## Techniques
 
-The whole vocabulary: `NONE`, `PUSH_IN`, `KEN_BURNS`, `DOC_SCROLL`, `PARALLAX_2_5D`.
+The whole vocabulary: `NONE`, `PUSH_IN`, `KEN_BURNS`, `DOC_SCROLL`, `PARALLAX_2_5D`, `DUST_DISSOLVE`.
 
-**Honoured by a built recipe today:** `NONE` only.
+**Honoured by a built recipe today:** `DOC_SCROLL`, `DUST_DISSOLVE`, `KEN_BURNS`, `PARALLAX_2_5D`, `PUSH_IN`
 
-The motion techniques belong to the still-image recipes, which are all still
-planned. The three built recipes carry their motion intrinsically and have no
-shot-level hook, so **send them `NONE`** — each recipe below states what it
-accepts. Anything a recipe does not honour still builds, and shows on the row
-as **not applied** rather than being silently dropped.
+Not every recipe accepts every technique — a bar chart has nowhere to put a
+Ken Burns drift. **Each recipe below states exactly what to send it**, and the
+answer is `NONE` wherever the recipe's own animation is the whole of it.
+A technique a recipe does not honour still builds and shows on the row as
+**not applied**, never silently dropped.
+
+- `NONE` — No shot-level motion. The recipe's own animation is the whole of it.
+- `PUSH_IN` — A slow scale toward the subject over the hold. Quiet emphasis.
+- `KEN_BURNS` — Scale plus a slow drift across a still, so a photograph feels filmed.
+- `DOC_SCROLL` — Scroll a tall capture to the cited line, then hold on it.
+- `PARALLAX_2_5D` — Layered depth: background, middle and foreground move at different rates during a push. Needs assets exported as separate layers, back to front.
+- `DUST_DISSOLVE` — Letters crumble away — fade, blur and drift upward in sequence. It MEANS loss: something erased, deleted or gone. Never a neutral transition.
 
 ## Archetype → recipe
 
@@ -35,11 +42,11 @@ as **not applied** rather than being silently dropped.
 | `PIE_CHART` | — | generate it; After Effects has no builder |
 | `COMPARISON_PANEL` | `COMPARISON_PANEL` | build in AE soon — generate for now |
 | `FLOW_DIAGRAM` | — | generate it; After Effects has no builder |
-| `SCREENSHOT_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE soon — generate for now |
-| `DOC_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE soon — generate for now |
-| `GSAP_METAPHOR` | `ASSET_REVEAL` | build in AE soon — generate for now |
-| `EMOTIONAL_MOMENT` | `ASSET_REVEAL` | build in AE soon — generate for now |
-| `BROLL_VIDEO` | `ASSET_REVEAL` | build in AE soon — generate for now |
+| `SCREENSHOT_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
+| `DOC_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
+| `GSAP_METAPHOR` | `ASSET_REVEAL` | build in AE now |
+| `EMOTIONAL_MOMENT` | `ASSET_REVEAL` | build in AE now |
+| `BROLL_VIDEO` | `ASSET_REVEAL` | build in AE now |
 
 ## Common props
 
@@ -63,7 +70,7 @@ One number counting up from zero, label above, unit below.
 
 **Covers archetypes:** `STAT_COUNTER`
 
-**Send `technique`:** `NONE`
+**Send `technique`:** `NONE` or `DUST_DISSOLVE`
 
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
@@ -103,7 +110,7 @@ Headline animating letter by letter, with one optional supporting line.
 
 **Covers archetypes:** `SECTION_TITLE_CARD`
 
-**Send `technique`:** `NONE`
+**Send `technique`:** `NONE` or `DUST_DISSOLVE`
 
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
@@ -111,6 +118,44 @@ Headline animating letter by letter, with one optional supporting line.
 | `supporting` | string |  | `""` | One smaller line beneath it. |
 | `variant` | `slide_up` \| `scale_center` \| `slide_left` \| `fade_rotate` |  | `"slide_up"` | How each letter arrives. |
 | `stagger` | number |  | `0.05` | Seconds between letters. Forced into 0.03–0.10s. _(clamped: letterStagger)_ |
+
+### `DOC_HIGHLIGHT`
+
+✅ built
+
+A captured page scrolls to the cited line and highlights it.
+
+**Use when:** Showing the source you are quoting. Needs `sourceAnchor` on the shot.
+
+**Covers archetypes:** `DOC_HIGHLIGHT`, `SCREENSHOT_HIGHLIGHT`
+
+**Send `technique`:** `NONE` or `DOC_SCROLL` or `PUSH_IN`
+
+**Requires:** `sourceAnchor` on the shot.
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `holdAfter` | number |  | `1.5` | Seconds to hold on the highlighted line after scrolling. |
+
+### `ASSET_REVEAL`
+
+✅ built
+
+A finished image or clip, full frame, with a disciplined in and out.
+
+**Use when:** Anything generated or captured elsewhere. Carries the generated and captured routes.
+
+**Covers archetypes:** `BROLL_VIDEO`, `GSAP_METAPHOR`, `EMOTIONAL_MOMENT`
+
+**Send `technique`:** `NONE` or `KEN_BURNS` or `PUSH_IN` or `PARALLAX_2_5D`
+
+**Requires:** `assets` on the shot.
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `fit` | `fill` \| `contain` |  | `"fill"` | fill crops to frame, contain letterboxes. |
+| `zoom` | number |  | `1.15` | End scale for PUSH_IN / KEN_BURNS / PARALLAX. 1.10-1.35 for evidence. |
+| `hold` | number |  | `0` | Seconds held still before the move starts. 0 means move throughout. |
 
 ### `LINE_GRAPH`
 
@@ -147,39 +192,3 @@ Two sides arriving one after the other, so the gap between them reads.
 | `left` | object | **yes** |  | {title, value, unit}. |
 | `right` | object | **yes** |  | {title, value, unit}. |
 | `caption` | string |  | `""` | One line above both. |
-
-### `DOC_HIGHLIGHT`
-
-⏳ planned — will be refused if ordered
-
-A captured page scrolls to the cited line and highlights it.
-
-**Use when:** Showing the source you are quoting. Needs `sourceAnchor` on the shot.
-
-**Covers archetypes:** `DOC_HIGHLIGHT`, `SCREENSHOT_HIGHLIGHT`
-
-**Send `technique`:** `NONE` or `DOC_SCROLL` or `PUSH_IN`
-
-**Requires:** `sourceAnchor` on the shot.
-
-| prop | type | required | default | meaning |
-|---|---|---|---|---|
-| `holdAfter` | number |  | `1.5` | Seconds to hold on the highlighted line after scrolling. |
-
-### `ASSET_REVEAL`
-
-⏳ planned — will be refused if ordered
-
-A finished image or clip, full frame, with a disciplined in and out.
-
-**Use when:** Anything generated or captured elsewhere. Carries the generated and captured routes.
-
-**Covers archetypes:** `BROLL_VIDEO`, `GSAP_METAPHOR`, `EMOTIONAL_MOMENT`
-
-**Send `technique`:** `NONE` or `KEN_BURNS` or `PUSH_IN`
-
-**Requires:** `assets` on the shot.
-
-| prop | type | required | default | meaning |
-|---|---|---|---|---|
-| `fit` | `fill` \| `contain` |  | `"fill"` | fill crops to frame, contain letterboxes. |

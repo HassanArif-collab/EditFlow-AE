@@ -282,6 +282,101 @@ function ef_vis_addLetterAnimator(layer, name, matchName, value, expr) {
     return anim;
 }
 
+/* ── techniques ──────────────────────────────────────────────
+   Shot-level motion, applied on top of whatever the recipe already does.
+   Every expression here multiplies `value` rather than assuming 100: the
+   recipes set Scale to fit or fill first, and an expression that hardcodes
+   100 silently throws that away (learned the hard way from the counter's
+   pulse, which un-did its own auto-fit). */
+
+/* Eased 0..1 across the move, after an optional still hold. */
+function ef_vis_progressExpr(hold, dur) {
+    return "var h=" + (hold || 0) + ";var d=" + Math.max(0.1, dur) + ";" +
+           "var t=time-inPoint-h;" +
+           "var p=(t<=0)?0:((t>=d)?1:easeOut(t,0,d,0,1));";
+}
+
+/* A slow scale toward the subject. rate scales the zoom for parallax depth. */
+function ef_vis_pushExpr(zoom, hold, dur, rate) {
+    var z = 1 + ((zoom || 1.15) - 1) * (rate == null ? 1 : rate);
+    return ef_vis_progressExpr(hold, dur) +
+           "var b=value;var s=1+(" + z + "-1)*p;[b[0]*s,b[1]*s];";
+}
+
+/* Ken Burns: the push, plus a slow drift so the frame is never static. */
+function ef_vis_driftExpr(comp, hold, dur, dx, dy) {
+    return ef_vis_progressExpr(hold, dur) +
+           "var b=value;[b[0]+" + dx + "*p,b[1]+" + dy + "*p];";
+}
+
+/* DUST_DISSOLVE — v7: per-letter fade + blur + upward drift, sequenced.
+   It means loss. Direction follows deletion (rtl) or reading (ltr). */
+function ef_vis_dustExpr(startAt, stagger, dur, count, rtl) {
+    var idx = rtl ? "(" + count + "-textIndex)" : "(textIndex-1)";
+    return "var st=" + startAt + ";var stag=" + stagger + ";var d=" + dur + ";" +
+           "var t0=st+" + idx + "*stag;var p=(time-inPoint-t0)/d;" +
+           "if(p<0)p=0;if(p>1)p=1;p=p*p;";
+}
+
+function ef_vis_applyDustDissolve(layer, comp, spec, startAt) {
+    // 60% overlap between letters, 1.2–2.0s total, per the technique deck
+    var text = String(spec.title || spec.value || "");
+    var count = Math.max(1, text.length);
+    var total = 1.6;
+    var stagger = (total * 0.4) / count;
+    var dur = Math.max(0.35, total * 0.6);
+    var rtl = String(spec.dustDirection || "rtl") === "rtl";
+    var p = ef_vis_dustExpr(startAt, stagger, dur, count, rtl);
+
+    ef_vis_addLetterAnimator(layer, "EF Dust Fade", "ADBE Text Opacity", 0,
+        p + "(1-p)*100;");
+    ef_vis_addLetterAnimator(layer, "EF Dust Drift", "ADBE Text Position 3D",
+        [0, -Math.round(comp.height * 0.045)], p + "[0,p*100,0];");
+    // Blur is what sells "crumbling" rather than "sliding away"
+    try {
+        ef_vis_addLetterAnimator(layer, "EF Dust Blur", "ADBE Text Blur",
+            [40, 40], p + "[p*100,p*100];");
+    } catch (eB) {}
+    // ponytail: no per-letter particle scatter — the deck asks for 12-16
+    // particles per letter, which is a real particle system in ExtendScript.
+    // Fade+blur+drift carries the read; add particles if it looks thin at 4K.
+    return true;
+}
+
+/**
+ * Apply spec.technique to a layer. Returns the technique actually applied,
+ * or "" when the recipe/technique pair has no meaning — the caller reports
+ * that as "not applied" rather than pretending.
+ */
+function ef_vis_applyTechnique(layer, comp, spec, opts) {
+    var t = String(spec.technique || "NONE").toUpperCase();
+    var o = opts || {};
+    var dur = (o.dur != null) ? o.dur : comp.duration;
+    var hold = (o.hold != null) ? o.hold : 0;
+    if (t === "NONE" || !t) return "";
+
+    if (t === "PUSH_IN" || t === "KEN_BURNS" || t === "PARALLAX_2_5D") {
+        if (!o.scalable) return "";
+        layer.property("Scale").expression =
+            ef_vis_pushExpr(o.zoom, hold, dur, o.rate);
+        if (t === "KEN_BURNS") {
+            // a drift of a few percent of frame reads as filmed, not sliding
+            var dx = Math.round(comp.width * 0.03) * (o.panX == null ? 1 : o.panX);
+            var dy = Math.round(comp.height * 0.02) * (o.panY == null ? -1 : o.panY);
+            layer.property("Position").expression = ef_vis_driftExpr(comp, hold, dur, dx, dy);
+        }
+        return t;
+    }
+
+    if (t === "DUST_DISSOLVE") {
+        if (!o.text) return "";
+        ef_vis_applyDustDissolve(layer, comp, spec, (o.dustStart != null) ? o.dustStart : dur * 0.45);
+        return t;
+    }
+
+    return "";   // DOC_SCROLL is intrinsic to DOC_HIGHLIGHT, never bolted on
+}
+
 /* ── background ── */
 
 function ef_vis_addBackground(comp, spec, cfg, missing) {
@@ -347,6 +442,10 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
         unit.property("Opacity").expression =
             "var t=time-inPoint-" + (spec.countDur || 3) + ";t<0?0:(t>=0.5?70:easeOut(t,0,0.5,0,70))";
     }
+
+    spec._techniqueApplied = ef_vis_applyTechnique(num, comp, spec, {
+        text: true, dustStart: (spec.countDur || 3) + 0.4,
+    });
 
     if (spec.pulse) {
         // ONE restrained pulse after the count lands — never a loop.
@@ -478,6 +577,10 @@ function ef_vis_buildTitleCard(comp, spec, cfg, missing) {
         } catch (eR) {}
     }
 
+    spec._techniqueApplied = ef_vis_applyTechnique(title, comp, spec, {
+        text: true, dustStart: (spec.stagger || 0.05) * String(spec.title).length + 0.8,
+    });
+
     if (spec.supporting) {
         var sub = comp.layers.addText(String(spec.supporting));
         sub.name = "Supporting";
@@ -532,6 +635,135 @@ function ef_vis_recipes() {
     } catch (e) { return ef_vis_err("recipes: " + e.toString()); }
 }
 
+/* ── ASSET_REVEAL ──────────────────────────────────────────
+   A finished image or clip, placed full frame. This is what carries the
+   `generated` and `captured` routes: the panel does not make the picture,
+   it places the one you made and gives it disciplined motion.
+
+   With several assets and PARALLAX_2_5D it treats them as depth layers,
+   back to front — bg 0.5, mid 1.0, fg 1.5, as the technique deck specifies. */
+function ef_vis_buildAssetReveal(comp, spec, cfg, missing) {
+    var names = spec.assets && spec.assets.length ? spec.assets : (spec.bgSrc ? [spec.bgSrc] : []);
+    if (!names.length) {
+        ef_vis_placeholderSolid(comp, "no asset named for " + spec.id);
+        missing.push("(no asset named)");
+        return 1;
+    }
+
+    var parallax = String(spec.technique || "").toUpperCase() === "PARALLAX_2_5D" && names.length > 1;
+    var rates = [0.5, 1.0, 1.5];
+    var placed = 0;
+
+    // back to front: assets[0] is the backdrop, so it goes in last (bottom)
+    for (var i = names.length - 1; i >= 0; i--) {
+        var item = ef_vis_importAsset(names[i], cfg, spec, false);
+        if (!item) {
+            missing.push(String(names[i]));
+            ef_vis_placeholderSolid(comp, names[i]).moveToEnd();
+            continue;
+        }
+        var L = comp.layers.add(item);
+        L.name = String(names[i]);
+        ef_vis_fitLayer(L, comp, spec.fit || "fill");
+        var rate = parallax ? rates[Math.min(i, rates.length - 1)] : 1;
+        ef_vis_applyTechnique(L, comp, spec, {
+            scalable: true, zoom: spec.zoom || 1.15, hold: spec.hold || 0,
+            dur: comp.duration - (spec.hold || 0), rate: rate,
+        });
+        L.moveToEnd();
+        placed++;
+    }
+    return placed;
+}
+
+/* Scale a footage layer to the comp: fill crops, contain letterboxes. */
+function ef_vis_fitLayer(L, comp, fit) {
+    try {
+        var sw = comp.width / L.source.width * 100;
+        var sh = comp.height / L.source.height * 100;
+        var s = (String(fit) === "contain") ? Math.min(sw, sh) : Math.max(sw, sh);
+        L.property("Scale").setValue([s, s]);
+        L.property("Position").setValue([comp.width / 2, comp.height / 2]);
+    } catch (e) {}
+}
+
+/* ── DOC_HIGHLIGHT ─────────────────────────────────────────
+   The captured page scrolls to the cited line and highlights it.
+
+   `rect` is in PAGE coordinates and the PNG may have been captured at a
+   different pixel density, so everything maps through image/page. If the
+   file on disk is not the size the brief declared, the highlight would land
+   on the wrong paragraph and read as a research error — so that is refused
+   outright rather than built confidently wrong. */
+function ef_vis_buildDocHighlight(comp, spec, cfg, missing) {
+    var a = spec.sourceAnchor;
+    if (!a || !a.image) return ef_vis_err("DOC_HIGHLIGHT needs sourceAnchor.image");
+
+    // root-relative: captures are shared between every shot citing the page
+    var item = ef_vis_importAsset(a.image, cfg, spec, true);
+    if (!item) {
+        missing.push(String(a.image));
+        ef_vis_placeholderSolid(comp, a.image);
+        return 1;
+    }
+
+    var realW = 0, realH = 0;
+    try { realW = item.width; realH = item.height; } catch (eD) {}
+    var wantW = a.imageWidth || a.pageWidth, wantH = a.imageHeight || a.pageHeight;
+    if (realW && wantW && (realW !== wantW || realH !== wantH)) {
+        return ef_vis_err("capture is " + realW + "x" + realH + " but the brief says " +
+                          wantW + "x" + wantH + " — the highlight would land on the " +
+                          "wrong line. Re-capture without resizing.");
+    }
+
+    var L = comp.layers.add(item);
+    L.name = "Source page";
+
+    // page space -> comp space: fit the page WIDTH, scroll vertically
+    var scale = comp.width / (a.pageWidth || realW || comp.width);
+    L.property("Scale").setValue([scale * 100, scale * 100]);
+
+    var rectMidPage = (a.rect.y || 0) + (a.rect.h || 0) / 2;
+    var restY = comp.height / 2 - rectMidPage * scale;      // cited line centred
+    var startY = comp.height / 2 - (realH * scale) / 2;     // page centred
+    if (String(spec.technique || "").toUpperCase() === "DOC_SCROLL" ||
+        !spec.technique || String(spec.technique).toUpperCase() === "NONE") {
+        var travel = Math.max(0.5, comp.duration - (spec.holdAfter || 1.5));
+        L.property("Position").setValue([comp.width / 2, 0]);
+        L.property("Position").expression =
+            "var d=" + travel + ";var t=time-inPoint;" +
+            "var p=(t<=0)?0:((t>=d)?1:easeOut(t,0,d,0,1));" +
+            "[" + (comp.width / 2) + "," + startY + "+(" + (restY - startY) + ")*p];";
+    } else {
+        L.property("Position").setValue([comp.width / 2, restY]);
+        ef_vis_applyTechnique(L, comp, spec, { scalable: true, zoom: spec.zoom || 1.1 });
+    }
+
+    // the highlight itself, arriving once the scroll has landed
+    var hl = comp.layers.addShape();
+    hl.name = "Highlight";
+    var g = hl.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+              .property("ADBE Vectors Group");
+    var rect = g.addProperty("ADBE Vector Shape - Rect");
+    var hw = Math.max(8, (a.rect.w || 0) * scale), hh = Math.max(8, (a.rect.h || 0) * scale);
+    rect.property("ADBE Vector Rect Size").setValue([hw, hh]);
+    var fill = g.addProperty("ADBE Vector Graphic - Fill");
+    fill.property("ADBE Vector Fill Color").setValue(spec.accent || [0.95, 0.85, 0.2]);
+    hl.property("Opacity").setValue(28);
+    hl.blendingMode = BlendingMode.MULTIPLY;
+
+    var hlX = ((a.rect.x || 0) + (a.rect.w || 0) / 2) * scale;
+    var arrive = Math.max(0.3, comp.duration - (spec.holdAfter || 1.5));
+    hl.property("Position").setValue([hlX, comp.height / 2]);
+    // swipe on from the left, the way a marker is drawn
+    hl.property("Scale").expression =
+        "var t=time-inPoint-" + arrive + ";" +
+        "if(t<=0){[0,100]}else{var p=(t>=0.45)?1:easeOut(t,0,0.45,0,1);[p*100,100]}";
+    hl.property("Anchor Point").setValue([-hw / 2, 0]);
+    hl.property("Position").setValue([hlX - hw / 2, comp.height / 2]);
+    return 2;
+}
+
 /* ── build one shot ────────────────────────────────────────
    Always a NEW version; never overwrites. */
 function ef_vis_buildShot(jsonStr) {
@@ -562,15 +794,26 @@ function ef_vis_buildShot(jsonStr) {
             app.endUndoGroup(); comp.remove();
             return ef_vis_err("no builder for \"" + wanted + "\" in this version");
         }
-        builder(comp, spec, cfg, missing);
+        var built = builder(comp, spec, cfg, missing);
+        // A builder may refuse outright — a capture that is not the size the
+        // brief declared would highlight the wrong line. Take the comp back
+        // out rather than leaving a confidently wrong version behind.
+        if (typeof built === "string" && built.indexOf("ERROR:") === 0) {
+            app.endUndoGroup();
+            try { comp.remove(); } catch (eR) {}
+            return built;
+        }
 
         // first build of a shot becomes the active version
         if (ef_vis_listVersions(spec.id).length === 1) ef_vis_setActiveVersion(spec.id, name);
 
         app.endUndoGroup();
         return ef_vis_json({ comp: comp.name, shot: spec.id, archetype: spec.archetype,
+                             recipe: String(wanted).toUpperCase(),
                              layers: comp.numLayers, duration: comp.duration,
-                             missingAssets: missing });
+                             missingAssets: missing,
+                             technique: String(spec.technique || "NONE"),
+                             techniqueApplied: String(spec._techniqueApplied || "") });
     } catch (e) {
         if (started) { try { app.endUndoGroup(); } catch (e2) {} }
         return ef_vis_err("buildShot: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));

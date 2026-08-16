@@ -123,6 +123,23 @@ Not cosmetic: the panel displays this line, and matching it against the Whisper
 transcript is how shot timing will be derived once that work is unparked.
 Direction markers would break both.
 
+## Deliverable — settled, not inherited
+
+**1920 × 1080, 30 fps, square pixels.** Owner's decision, 2026-08-16.
+
+This is now a pinned project setting rather than something read off whichever
+composition happens to be frontmost in After Effects. The old behaviour was a
+latent bug: open a vertical comp by accident and every shot in the brief builds
+vertical, discoverable only after the whole thing is built.
+
+What it means for each side:
+
+- **Generated and captured assets should be 1920 × 1080 or larger.** Anything
+  smaller is upscaled and softens; the panel warns on the row when an asset is
+  under the frame size rather than quietly stretching it.
+- **`durationInFrames` converts at 30 fps.**
+- Vertical Shorts/Reels are a repurpose of this master, not a separate brief.
+
 ## Duration
 
 `durationInFrames` wins. Otherwise `duration` in seconds. Otherwise 5 seconds,

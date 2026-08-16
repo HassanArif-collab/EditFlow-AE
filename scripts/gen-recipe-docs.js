@@ -43,9 +43,7 @@ function section(name) {
     '',
     `**Covers archetypes:** ${r.archetypes.map((a) => `\`${a}\``).join(', ')}`,
   ];
-  if (r.techniques && r.techniques.length) {
-    lines.push('', `**Honours techniques:** ${r.techniques.map((t) => `\`${t}\``).join(', ')}`);
-  }
+  lines.push('', `**Send \`technique\`:** ${R.techniquesFor(name).map((t) => `\`${t}\``).join(' or ')}`);
   if (r.needs) lines.push('', `**Requires:** \`${r.needs}\` on the shot.`);
   lines.push('', '| prop | type | required | default | meaning |',
                  '|---|---|---|---|---|', paramRows(r.params), '');
@@ -82,11 +80,19 @@ typecheck, showing you what it refused instead of building something wrong.
 **Built today:** ${built.map((n) => `\`${n}\``).join(', ')}
 **Planned:** ${planned.map((n) => `\`${n}\``).join(', ')}
 
-## Techniques honoured today
+## Techniques
 
-${R.honouredTechniques().length
+The whole vocabulary: ${R.TECHNIQUES.map((t) => `\`${t}\``).join(', ')}.
+
+**Honoured by a built recipe today:** ${R.honouredTechniques().length
   ? R.honouredTechniques().map((t) => `\`${t}\``).join(', ')
-  : '_None yet — the built recipes have fixed motion. Any `technique` you send is recorded and shown on the row as "not applied", never silently dropped._'}
+  : '\`NONE\` only.'}
+
+The motion techniques belong to the still-image recipes, which are all still
+planned. The three built recipes carry their motion intrinsically and have no
+shot-level hook, so **send them \`NONE\`** — each recipe below states what it
+accepts. Anything a recipe does not honour still builds, and shows on the row
+as **not applied** rather than being silently dropped.
 
 ## Archetype → recipe
 

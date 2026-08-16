@@ -134,6 +134,13 @@ export const RECIPES = {
   },
 };
 
+/* The agreed technique vocabulary, narrowed to exactly what a builder here can
+   act on. `NONE` is always valid and always honoured — it means "no shot-level
+   motion", which is what the text and data recipes want, since their motion is
+   intrinsic. Send NONE rather than omitting the field, so a missing technique
+   is distinguishable from a deliberate still. */
+export const TECHNIQUES = ['NONE', 'PUSH_IN', 'KEN_BURNS', 'DOC_SCROLL', 'PARALLAX_2_5D'];
+
 /* Every recipe takes these too — they are set on the shot, not inside props. */
 export const COMMON_PARAMS = {
   bgSrc: { type: 'string', default: '', help: 'Background image filename, from the shot assets.' },
@@ -146,13 +153,29 @@ export function builtRecipes() {
   return Object.keys(RECIPES).filter((k) => RECIPES[k].status === 'built');
 }
 
-/** Every technique value a built recipe honours today. */
+/**
+ * Every technique value a built recipe honours today.
+ *
+ * `NONE` is excluded — it is honoured by definition and listing it would
+ * suggest the motion techniques are live when they are not.
+ */
 export function honouredTechniques() {
   const out = new Set();
   for (const name of builtRecipes()) {
-    for (const t of RECIPES[name].techniques || []) out.add(t);
+    for (const t of RECIPES[name].techniques || []) if (t !== 'NONE') out.add(t);
   }
   return [...out].sort();
+}
+
+/**
+ * Which technique to send for a given recipe. A recipe with no motion hook
+ * wants NONE — sending it PUSH_IN would show as "not applied" on the row.
+ */
+export function techniquesFor(recipeName) {
+  const spec = RECIPES[String(recipeName || '').toUpperCase()];
+  if (!spec) return [];
+  const list = (spec.techniques || []).filter((t) => t !== 'NONE');
+  return list.length ? ['NONE', ...list] : ['NONE'];
 }
 
 /**

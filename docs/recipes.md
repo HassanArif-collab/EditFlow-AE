@@ -12,9 +12,17 @@ typecheck, showing you what it refused instead of building something wrong.
 **Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`
 **Planned:** `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`
 
-## Techniques honoured today
+## Techniques
 
-_None yet — the built recipes have fixed motion. Any `technique` you send is recorded and shown on the row as "not applied", never silently dropped._
+The whole vocabulary: `NONE`, `PUSH_IN`, `KEN_BURNS`, `DOC_SCROLL`, `PARALLAX_2_5D`.
+
+**Honoured by a built recipe today:** `NONE` only.
+
+The motion techniques belong to the still-image recipes, which are all still
+planned. The three built recipes carry their motion intrinsically and have no
+shot-level hook, so **send them `NONE`** — each recipe below states what it
+accepts. Anything a recipe does not honour still builds, and shows on the row
+as **not applied** rather than being silently dropped.
 
 ## Archetype → recipe
 
@@ -55,6 +63,8 @@ One number counting up from zero, label above, unit below.
 
 **Covers archetypes:** `STAT_COUNTER`
 
+**Send `technique`:** `NONE`
+
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
 | `value` | number | **yes** |  | The number it counts to. |
@@ -74,6 +84,8 @@ Axis draws first, bars rise from the baseline, values count up, labels last.
 
 **Covers archetypes:** `BAR_CHART`
 
+**Send `technique`:** `NONE`
+
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
 | `bars` | array | **yes** |  | Array of {label, value, accent}. Two to six reads best. |
@@ -90,6 +102,8 @@ Headline animating letter by letter, with one optional supporting line.
 **Use when:** A chapter break, or the line that names what follows.
 
 **Covers archetypes:** `SECTION_TITLE_CARD`
+
+**Send `technique`:** `NONE`
 
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
@@ -108,6 +122,8 @@ A line drawing on across an axis, with the final value called out.
 
 **Covers archetypes:** `LINE_GRAPH`
 
+**Send `technique`:** `NONE`
+
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
 | `points` | array | **yes** |  | Array of {label, value}, in order. |
@@ -124,7 +140,7 @@ Two sides arriving one after the other, so the gap between them reads.
 
 **Covers archetypes:** `COMPARISON_PANEL`
 
-**Honours techniques:** `PUSH_IN`
+**Send `technique`:** `NONE` or `PUSH_IN`
 
 | prop | type | required | default | meaning |
 |---|---|---|---|---|
@@ -142,7 +158,7 @@ A captured page scrolls to the cited line and highlights it.
 
 **Covers archetypes:** `DOC_HIGHLIGHT`, `SCREENSHOT_HIGHLIGHT`
 
-**Honours techniques:** `DOC_SCROLL`, `PUSH_IN`
+**Send `technique`:** `NONE` or `DOC_SCROLL` or `PUSH_IN`
 
 **Requires:** `sourceAnchor` on the shot.
 
@@ -160,7 +176,7 @@ A finished image or clip, full frame, with a disciplined in and out.
 
 **Covers archetypes:** `BROLL_VIDEO`, `GSAP_METAPHOR`, `EMOTIONAL_MOMENT`
 
-**Honours techniques:** `KEN_BURNS`, `PUSH_IN`
+**Send `technique`:** `NONE` or `KEN_BURNS` or `PUSH_IN`
 
 **Requires:** `assets` on the shot.
 

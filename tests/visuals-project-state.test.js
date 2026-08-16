@@ -276,3 +276,86 @@ test('a saved project with no sidecar yet reads as empty, not as an error', () =
     } finally { delete sandbox.File; }
   });
 });
+
+/* ── scanning the visuals folder ────────────────────────────────────
+   assets[] and sourceAnchor.image resolve from DIFFERENT bases. Getting
+   that wrong looks like a missing file rather than a path bug, so it is
+   pinned here against a fake filesystem. */
+
+function withFS(tree, fn) {
+  // tree: { "G:/vis/assets/a": ["one.png"], "G:/vis/cap.png": true }
+  const isDir = (p) => Object.prototype.hasOwnProperty.call(tree, p) && Array.isArray(tree[p]);
+  sandbox.Folder = function (p) {
+    const path = String(p).replace(/[\/]+$/, '');
+    this.fsName = path;
+    Object.defineProperty(this, 'exists', { get: () => isDir(path) });
+    this.getFiles = () => (tree[path] || []).map((n) => {
+      const f = new sandbox.File(path + '/' + n);
+      f.name = n;
+      return f;
+    });
+  };
+  sandbox.File = function (p) {
+    const path = String(p);
+    this.fsName = path;
+    this.name = path.split('/').pop();
+    Object.defineProperty(this, 'exists', { get: () => tree[path] === true });
+  };
+  try { return fn(); } finally { delete sandbox.Folder; delete sandbox.File; }
+}
+
+const FS = {
+  'G:/vis': [],
+  'G:/vis/assets/cold-open/energy-fluid': ['fluid.png', 'fluid-alt.png'],
+  'G:/vis/assets/_captures/dawn-com-2011436': ['fullpage.png'],
+  'G:/vis/assets/_captures/dawn-com-2011436/fullpage.png': true,
+};
+
+test('scanning reports what each shot folder actually holds', () => {
+  withFS(FS, () => {
+    const r = JSON.parse(sandbox.ef_vis_scanAssets(JSON.stringify({
+      root: 'G:/vis', dirs: ['assets/cold-open/energy-fluid'],
+    })));
+    assert.deepEqual(r.dirs['assets/cold-open/energy-fluid'], ['fluid.png', 'fluid-alt.png']);
+    assert.equal(r.missingDirs.length, 0);
+  });
+});
+
+test('a folder the brief names but nobody created is reported, not guessed at', () => {
+  withFS(FS, () => {
+    const r = JSON.parse(sandbox.ef_vis_scanAssets(JSON.stringify({
+      root: 'G:/vis', dirs: ['assets/cold-open/energy-fluid', 'assets/nope/missing'],
+    })));
+    assert.deepEqual(r.missingDirs, ['assets/nope/missing']);
+    assert.ok(r.dirs['assets/cold-open/energy-fluid'], 'the others still scan');
+  });
+});
+
+test('a capture resolves from the ROOT, not from the shot folder', () => {
+  // the silent miss the contract exists to prevent: joining this onto
+  // assetDir would look for G:/vis/assets/cold-open/energy-fluid/assets/...
+  withFS(FS, () => {
+    const r = JSON.parse(sandbox.ef_vis_scanAssets(JSON.stringify({
+      root: 'G:/vis',
+      dirs: ['assets/cold-open/energy-fluid'],
+      images: ['assets/_captures/dawn-com-2011436/fullpage.png'],
+    })));
+    assert.deepEqual(r.missingImages, [], 'found at the root-relative path');
+  });
+});
+
+test('a capture that was never dropped in is named', () => {
+  withFS(FS, () => {
+    const r = JSON.parse(sandbox.ef_vis_scanAssets(JSON.stringify({
+      root: 'G:/vis', dirs: [], images: ['assets/_captures/gone/fullpage.png'],
+    })));
+    assert.deepEqual(r.missingImages, ['assets/_captures/gone/fullpage.png']);
+  });
+});
+
+test('no visuals root set is a clear refusal, not an empty result', () => {
+  withFS(FS, () => {
+    assert.match(sandbox.ef_vis_scanAssets('{"dirs":[]}'), /^ERROR:.*root/);
+    assert.match(sandbox.ef_vis_scanAssets('{"root":"G:/nope","dirs":[]}'), /^ERROR:.*not found/);
+  });
+});

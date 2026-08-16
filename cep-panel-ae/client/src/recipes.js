@@ -198,15 +198,20 @@ export function recipeForArchetype(archetype) {
  * principle as is_plausible_correction() in the transcript corrector —
  * refuse and report, never run and hope.
  *
- * Returns { ok, recipe, props, errors[] }. Unknown keys are dropped with a
- * note rather than passed through to a builder that would ignore them.
+ * Returns { ok, recipe, props, common, errors[], warnings[] }.
+ *
+ * The errors/warnings split matters: a missing required prop means the shot
+ * cannot be built, but an extra key the web agent invented is just noise to
+ * drop. Treating the second as fatal would reject whole briefs over a typo.
  */
 export function validateProps(recipeName, props) {
   const name = String(recipeName || '').toUpperCase();
   const spec = RECIPES[name];
   const errors = [];
+  const warnings = [];
   if (!spec) {
-    return { ok: false, recipe: name, props: {}, errors: [`unknown recipe "${recipeName}"`] };
+    return { ok: false, recipe: name, props: {}, common: {},
+             errors: [`unknown recipe "${recipeName}"`], warnings };
   }
   if (spec.status !== 'built') {
     errors.push(`${name} is planned, not built yet — this shot cannot be built`);
@@ -239,18 +244,35 @@ export function validateProps(recipeName, props) {
       out[key] = v;
     } else if (p.type === 'enum') {
       if (p.values.indexOf(String(v)) < 0) {
-        errors.push(`"${key}" must be one of ${p.values.join(', ')} — got ${JSON.stringify(v)}`);
+        // A cosmetic choice with a safe fallback must not cost the whole shot:
+        // an agent inventing "explode_wildly" should get slide_up and a note,
+        // not lose the title card. Only an enum with no default is fatal.
+        if (p.default != null) {
+          warnings.push(`"${key}" ${JSON.stringify(v)} is not one of ${p.values.join(', ')} — using ${p.default}`);
+          out[key] = p.default;
+        } else {
+          errors.push(`"${key}" must be one of ${p.values.join(', ')} — got ${JSON.stringify(v)}`);
+        }
         continue;
       }
       out[key] = String(v);
     }
   }
 
+  // The common props travel in the same object but belong to every recipe.
+  // Reading them here is what stops "accentColor" reading as a typo.
+  const common = {};
+  for (const key of Object.keys(COMMON_PARAMS)) {
+    common[key] = Object.prototype.hasOwnProperty.call(given, key) && given[key] != null
+      ? String(given[key]) : COMMON_PARAMS[key].default;
+  }
+
   for (const key of Object.keys(given)) {
-    if (!Object.prototype.hasOwnProperty.call(spec.params, key)) {
-      errors.push(`${name} has no parameter "${key}" — ignored`);
+    if (!Object.prototype.hasOwnProperty.call(spec.params, key) &&
+        !Object.prototype.hasOwnProperty.call(COMMON_PARAMS, key)) {
+      warnings.push(`${name} has no parameter "${key}" — ignored`);
     }
   }
 
-  return { ok: errors.length === 0, recipe: name, props: out, errors };
+  return { ok: errors.length === 0, recipe: name, props: out, common, errors, warnings };
 }

@@ -10,6 +10,8 @@
  *   { shots: [{ id, scriptLine, archetype, durationInFrames, props: {...} }] }
  */
 
+import { RECIPES, TECHNIQUES, recipeForArchetype, validateProps } from './recipes.js';
+
 /* Motion bands from prompts/visual-v7-glm/v7/visual_archetypes.md
    ("Canonical Motion Limits"). Values outside these are clamped, not obeyed —
    the style guide is enforced rather than hoped for. */
@@ -69,7 +71,17 @@ export function groupDigits(n) {
 
 /* ── Parsing ──────────────────────────────────────────────── */
 
-const DEFAULT_FPS = 30;
+/* Settled 2026-08-16: every shot and the master are built at this size, not
+   at whatever composition happens to be frontmost in After Effects. Inheriting
+   it meant an accidentally-open vertical comp built the whole brief vertical,
+   discoverable only after everything was built. See docs/brief-schema.md. */
+export const DELIVERABLE = { width: 1920, height: 1080, fps: 30 };
+
+const DEFAULT_FPS = DELIVERABLE.fps;
+
+/* Where a shot actually gets made. `after_effects` builds from a recipe; the
+   other two place a file produced elsewhere. */
+export const ROUTES = ['after_effects', 'generated', 'captured'];
 
 /**
  * Parse a shotlist file. Tolerates the whole file, a bare array, or prose
@@ -110,78 +122,173 @@ export function parseShotlist(raw, opts) {
 }
 
 /**
- * One raw shot → a strict build spec, or { error }. Unsupported archetypes
- * are *reported*, never silently dropped — a missing shot you don't know
- * about is worse than an error you do.
+ * One raw shot → a strict build spec, or { error }.
+ *
+ * Prop shape and types are checked ONCE, by the registry in recipes.js — that
+ * file is the published contract, so a second copy of the rules here would
+ * drift from what the web agent was told. What stays here is the part a
+ * type table cannot express: domain invariants like "exactly one accent bar"
+ * and "the bar scale is the tallest bar".
+ *
+ * Unsupported archetypes are *reported*, never silently dropped — a missing
+ * shot you don't know about is worse than an error you do.
  */
 export function normalizeShot(raw, opts) {
   const options = opts || {};
-  const fps = options.fps || DEFAULT_FPS;
+  const fps = options.fps || DELIVERABLE.fps;
   if (!raw || typeof raw !== 'object') return { error: 'not an object' };
 
   const archetype = String(raw.archetype || '').toUpperCase();
-  if (!archetype) return { error: 'missing archetype' };
-  if (!SUPPORTED_ARCHETYPES.has(archetype)) {
-    return { error: `archetype ${archetype} is not built in After Effects (v1 builds ${[...SUPPORTED_ARCHETYPES].join(', ')})` };
+  if (!archetype && !raw.recipe) return { error: 'missing archetype' };
+
+  // recipe wins; archetype is the fallback so older shotlists keep working
+  const recipeName = String(raw.recipe || '').toUpperCase() ||
+                     recipeForArchetype(archetype) || archetype;
+  const recipe = RECIPES[recipeName];
+  if (!recipe) {
+    return { error: `${archetype || recipeName} has no After Effects builder — generate this shot instead` };
+  }
+  if (recipe.status !== 'built') {
+    // Name the archetype the brief actually asked for, not just the recipe it
+    // maps to — "ASSET_REVEAL is planned" tells you nothing about which shot.
+    const asked = archetype && archetype !== recipeName ? `${archetype} (${recipeName})` : recipeName;
+    return { error: `${asked} is planned, not built yet — generate this shot for now` };
   }
 
   const id = String(raw.id || `shot_${String((options.index || 0) + 1).padStart(2, '0')}`);
   const p = raw.props || {};
+  const warnings = [];
+
+  // Duration precedence, per brief-schema.md: frames, then seconds, then a
+  // default loud enough to notice.
   const frames = Number(raw.durationInFrames);
-  const duration = Number.isFinite(frames) && frames > 0 ? frames / fps : 5;
+  const seconds = Number(raw.duration);
+  let duration;
+  if (Number.isFinite(frames) && frames > 0) duration = frames / fps;
+  else if (Number.isFinite(seconds) && seconds > 0) duration = seconds;
+  else {
+    duration = 5;
+    warnings.push('no duration given — using 5s');
+  }
+
+  const checked = validateProps(recipeName, p);
+  if (!checked.ok) return { error: checked.errors[0], errors: checked.errors };
+  for (const w of checked.warnings) warnings.push(w);
 
   const spec = {
     id,
-    archetype,
+    archetype: archetype || recipeName,
+    recipe: recipeName,
     duration: Math.round(duration * 1000) / 1000,
     scriptLine: String(raw.scriptLine || ''),
     talkingHead: !!raw.talkingHead,
-    bgSrc: typeof p.bgSrc === 'string' ? p.bgSrc : '',
-    accent: hexToRgb(p.accentColor, [0.72, 0.53, 0.04]),
-    font: typeof p.font === 'string' ? p.font : '',
+    // props are flattened onto the spec because that is what the builders in
+    // visuals.jsx read; nesting them would mean touching every builder
+    ...checked.props,
+    bgSrc: checked.common.bgSrc,
+    accent: hexToRgb(checked.common.accentColor, [0.72, 0.53, 0.04]),
+    font: checked.common.font,
+    ...briefFields(raw, warnings),
   };
 
-  if (archetype === 'STAT_COUNTER') {
-    const value = Number(p.value);
-    if (!Number.isFinite(value)) return { error: 'STAT_COUNTER needs a numeric props.value' };
-    spec.value = value;
-    spec.title = String(p.title || '');
-    spec.prefix = String(p.prefix || '');
-    spec.unit = String(p.unit || '');
-    spec.countDur = clampMotion('statCountUp', p.countDur != null ? p.countDur
-      : Math.min(4.0, Math.max(2.5, duration * 0.7)));
-    spec.pulse = !!p.pulse;
+  applyClamps(recipeName, spec);
+
+  if (recipeName === 'STAT_COUNTER' && spec.countDur == null) {
+    // a count that outruns the shot reads as a glitch; scale it to the shot
+    spec.countDur = clampMotion('statCountUp', duration * 0.7);
   }
 
-  if (archetype === 'BAR_CHART') {
-    const bars = Array.isArray(p.bars) ? p.bars : [];
-    if (!bars.length) return { error: 'BAR_CHART needs props.bars [{label, value}]' };
+  if (recipeName === 'BAR_CHART') {
     const clean = [];
-    for (const b of bars) {
+    for (const b of spec.bars) {
       const v = Number(b && b.value);
-      if (!Number.isFinite(v)) return { error: `bar "${(b && b.label) || '?'}" has a non-numeric value` };
+      if (!Number.isFinite(v)) {
+        return { error: `bar "${(b && b.label) || '?'}" has a non-numeric value` };
+      }
       clean.push({ label: String((b && b.label) || ''), value: v, accent: !!(b && b.accent) });
     }
     // exactly one accent bar: the one the script talks about
-    const idx = Number.isFinite(Number(p.accentIndex)) ? Number(p.accentIndex)
+    const idx = Number.isFinite(Number(spec.accentIndex)) ? Number(spec.accentIndex)
       : clean.findIndex((b) => b.accent);
     clean.forEach((b, n) => { b.accent = n === idx; });
     spec.bars = clean;
     spec.maxValue = Math.max(...clean.map((b) => b.value), 1);
-    spec.caption = String(p.caption || '');
-    spec.growDur = clampMotion('barGrow', p.growDur != null ? p.growDur : 0.9);
   }
 
-  if (archetype === 'SECTION_TITLE_CARD') {
-    const title = String(p.title || '').trim();
-    if (!title) return { error: 'SECTION_TITLE_CARD needs props.title' };
-    spec.title = title;
-    spec.supporting = String(p.supporting || '');
-    spec.variant = TITLE_VARIANTS.indexOf(String(p.variant)) >= 0 ? String(p.variant) : 'slide_up';
-    spec.stagger = clampMotion('letterStagger', p.stagger != null ? p.stagger : 0.05);
+  if (recipeName === 'SECTION_TITLE_CARD' && !String(spec.title || '').trim()) {
+    return { error: 'SECTION_TITLE_CARD needs props.title — an empty card is never what was meant' };
   }
 
+  if (warnings.length) spec.warnings = warnings;
   return { spec };
+}
+
+/** Force every motion value the registry marks into its v7 band. */
+function applyClamps(recipeName, spec) {
+  const params = RECIPES[recipeName].params;
+  for (const key of Object.keys(params)) {
+    const band = params[key].clamp;
+    if (band && spec[key] != null) spec[key] = clampMotion(band, spec[key]);
+  }
+}
+
+/**
+ * The shot-level fields the brief carries beyond props. Stored verbatim and
+ * displayed — `archetype` and `technique` belong to the Content Prompts side
+ * and are never rewritten here, only reported when this panel cannot act on
+ * them.
+ */
+function briefFields(raw, warnings) {
+  const out = {};
+  const technique = String(raw.technique || 'NONE').toUpperCase();
+  out.technique = TECHNIQUES.indexOf(technique) >= 0 ? technique : 'NONE';
+  if (out.technique !== technique) {
+    warnings.push(`technique "${raw.technique}" is not in the agreed list — treated as NONE`);
+  }
+
+  const placement = String(raw.placement || 'full').toLowerCase();
+  out.placement = placement === 'overlay' ? 'overlay' : 'full';
+
+  const route = String(raw.productionRoute || 'after_effects').toLowerCase();
+  out.productionRoute = ROUTES.indexOf(route) >= 0 ? route : 'after_effects';
+  out.routeReason = String(raw.routeReason || '');
+
+  out.assetDir = String(raw.assetDir || '');
+  out.assets = Array.isArray(raw.assets) ? raw.assets.map(String) : [];
+  out.note = String(raw.note || '');
+  out.qaFocus = String(raw.qaFocus || '');
+  // completeness is declared, never inferred from the shape of the JSON
+  out.needs = Array.isArray(raw.needs) ? raw.needs.map(String) : [];
+
+  const anchor = normalizeAnchor(raw.sourceAnchor, warnings);
+  if (anchor) out.sourceAnchor = anchor;
+  return out;
+}
+
+/**
+ * `sourceAnchor` shape check. The pixel check against the real file happens in
+ * After Effects, where the image is actually imported — here we only make sure
+ * the numbers needed to do that arrived.
+ */
+function normalizeAnchor(a, warnings) {
+  if (!a || typeof a !== 'object') return null;
+  const r = a.rect || {};
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const out = {
+    url: String(a.url || ''),
+    image: String(a.image || ''),          // relative to the VISUALS ROOT, not assetDir
+    pageWidth: num(a.pageWidth),
+    pageHeight: num(a.pageHeight),
+    imageWidth: num(a.imageWidth) || num(a.pageWidth),
+    imageHeight: num(a.imageHeight) || num(a.pageHeight),
+    rect: { x: num(r.x), y: num(r.y), w: num(r.w), h: num(r.h) },
+  };
+  if (!out.image) { warnings.push('sourceAnchor has no image — the highlight cannot be placed'); return null; }
+  if (!out.pageHeight || !out.rect.h) {
+    warnings.push('sourceAnchor is missing page height or rect — the highlight cannot be placed');
+    return null;
+  }
+  return out;
 }
 
 /* ── Versions ─────────────────────────────────────────────── */

@@ -102,7 +102,7 @@ test('one broken shot does not lose the others', () => {
   ] }));
   assert.equal(r.shots.length, 1);
   assert.equal(r.errors.length, 1);
-  assert.match(r.errors[0], /numeric props.value/);
+  assert.match(r.errors[0], /needs "value"/, 'names the missing prop');
 });
 
 /* ── per-archetype requirements ── */
@@ -138,7 +138,7 @@ test('a title card with no title is an error, not an empty card', () => {
   const r = M.parseShotlist(JSON.stringify({ shots: [{
     id: 's', archetype: 'SECTION_TITLE_CARD', durationInFrames: 90, props: {},
   }] }));
-  assert.match(r.errors[0], /needs props.title/);
+  assert.match(r.errors[0], /needs "title"/, 'names the missing prop');
 });
 
 /* ── versions ── */
@@ -259,4 +259,140 @@ test('orphans are never placed in the master', () => {
                            proj(['shot_01', ['★ shot_01 v1']], ['stray', ['★ stray v1']])).rows;
   const plan = M.masterPlan(rows, 30);
   assert.deepEqual(plan.order.map((o) => o.id), ['shot_01']);
+});
+
+/* ── the brief fields (docs/brief-schema.md) ────────────────────────
+   These are the seam with the Content Prompts repo. A field silently
+   dropped here is a field the web agent spent effort producing for
+   nothing, and the failure would only show up as a shot that looks
+   subtly wrong on screen. */
+
+const brief = (over) => Object.assign({
+  id: 'shot_02', archetype: 'STAT_COUNTER', recipe: 'STAT_COUNTER',
+  technique: 'NONE', durationInFrames: 150,
+  scriptLine: 'That line is Rs 8,484 per month.',
+  props: { value: 8484, prefix: 'Rs ' },
+}, over);
+
+const one = (over) => M.normalizeShot(brief(over), { fps: 30 });
+
+test('every brief field survives into the spec', () => {
+  const { spec } = one({
+    placement: 'overlay', productionRoute: 'generated',
+    routeReason: 'fluid metaphor — faster generated',
+    assetDir: 'assets/cold-open/energy-fluid', assets: ['fluid.png'],
+    note: 'hold, then push in', qaFocus: 'illegible number', needs: ['props.unit'],
+  });
+  assert.equal(spec.placement, 'overlay');
+  assert.equal(spec.productionRoute, 'generated');
+  assert.equal(spec.routeReason, 'fluid metaphor — faster generated');
+  assert.equal(spec.assetDir, 'assets/cold-open/energy-fluid');
+  assert.deepEqual(spec.assets, ['fluid.png']);
+  assert.equal(spec.note, 'hold, then push in');
+  assert.equal(spec.qaFocus, 'illegible number');
+  assert.deepEqual(spec.needs, ['props.unit']);
+});
+
+test('the defaults are the safe ones', () => {
+  const { spec } = one({});
+  assert.equal(spec.placement, 'full', 'an overlay mistaken for full is a hard cut mid-sentence');
+  assert.equal(spec.productionRoute, 'after_effects');
+  assert.deepEqual(spec.needs, [], 'no needs means complete — build without the model');
+  assert.equal(spec.technique, 'NONE');
+});
+
+test('a technique outside the agreed list becomes NONE and says so', () => {
+  const { spec } = one({ technique: 'DUST_DISSOLVE' });
+  assert.equal(spec.technique, 'NONE');
+  assert.match(spec.warnings.join(' '), /DUST_DISSOLVE/);
+});
+
+test('recipe wins over archetype, and archetype still works alone', () => {
+  assert.equal(one({ archetype: 'DOC_HIGHLIGHT', recipe: 'STAT_COUNTER' }).spec.recipe, 'STAT_COUNTER');
+  const legacy = M.normalizeShot({ id: 's', archetype: 'STAT_COUNTER',
+    durationInFrames: 150, props: { value: 1 } }, { fps: 30 });
+  assert.equal(legacy.spec.recipe, 'STAT_COUNTER', 'older shotlists have no recipe field');
+});
+
+test('an archetype AE cannot build names itself in the reason', () => {
+  const r = M.normalizeShot({ id: 's', archetype: 'BROLL_VIDEO', props: {} }, { fps: 30 });
+  assert.match(r.error, /BROLL_VIDEO/, 'ASSET_REVEAL alone would not say which shot');
+  assert.match(r.error, /generate/);
+});
+
+/* ── duration precedence ── */
+
+test('durationInFrames wins, then seconds, then a loud default', () => {
+  assert.equal(one({ durationInFrames: 150 }).spec.duration, 5);
+  assert.equal(one({ durationInFrames: 150, duration: 99 }).spec.duration, 5, 'frames win');
+  const secs = one({ durationInFrames: null, duration: 3.5 }).spec;
+  assert.equal(secs.duration, 3.5);
+  const none = one({ durationInFrames: null }).spec;
+  assert.equal(none.duration, 5);
+  assert.match(none.warnings.join(' '), /no duration/, 'a forgotten duration must be visible');
+});
+
+test('frames convert at the deliverable rate, not an assumed 30', () => {
+  assert.equal(M.DELIVERABLE.fps, 30);
+  assert.equal(M.normalizeShot(brief({ durationInFrames: 120 }), { fps: 60 }).spec.duration, 2);
+});
+
+/* ── sourceAnchor ── */
+
+const ANCHOR = {
+  url: 'https://www.dawn.com/news/2011436',
+  image: 'assets/_captures/dawn-com-2011436/fullpage.png',
+  pageWidth: 1280, pageHeight: 6461, imageWidth: 1280, imageHeight: 6461,
+  rect: { x: 108, y: 1632, w: 728, h: 92 },
+};
+
+test('sourceAnchor is carried whole, image path untouched', () => {
+  const { spec } = one({ sourceAnchor: ANCHOR });
+  // relative to the VISUALS ROOT, not assetDir — joining it to the shot
+  // folder is the silent miss this contract exists to prevent
+  assert.equal(spec.sourceAnchor.image, 'assets/_captures/dawn-com-2011436/fullpage.png');
+  assert.deepEqual(spec.sourceAnchor.rect, { x: 108, y: 1632, w: 728, h: 92 });
+  assert.equal(spec.sourceAnchor.imageHeight, 6461);
+});
+
+test('imageWidth/Height fall back to the page size when omitted', () => {
+  const { pageWidth, pageHeight, ...rest } = ANCHOR;
+  const { spec } = one({ sourceAnchor: { ...rest, pageWidth, pageHeight,
+                                         imageWidth: undefined, imageHeight: undefined } });
+  assert.equal(spec.sourceAnchor.imageWidth, 1280);
+  assert.equal(spec.sourceAnchor.imageHeight, 6461);
+});
+
+test('an anchor with no rect is refused rather than highlighting the wrong line', () => {
+  const { spec } = one({ sourceAnchor: { image: 'x.png', pageHeight: 100 } });
+  assert.equal(spec.sourceAnchor, undefined);
+  assert.match(spec.warnings.join(' '), /highlight cannot be placed/);
+});
+
+/* ── props ── */
+
+test('the common props ride inside props without reading as typos', () => {
+  const { spec } = one({ props: { value: 1, accentColor: '#ff0000', font: 'Arial-Bold' } });
+  assert.deepEqual(spec.accent, [1, 0, 0]);
+  assert.equal(spec.font, 'Arial-Bold');
+  assert.equal(spec.warnings, undefined, 'accentColor is not an unknown parameter');
+});
+
+test('an invented prop is a warning, not a lost shot', () => {
+  const { spec } = one({ props: { value: 1, sparkles: true } });
+  assert.equal(spec.value, 1, 'the shot still builds');
+  assert.match(spec.warnings.join(' '), /sparkles/);
+});
+
+test('an unapproved enum falls back and warns instead of failing', () => {
+  const r = M.normalizeShot({ id: 's', archetype: 'SECTION_TITLE_CARD', durationInFrames: 90,
+    props: { title: 'THE MONEY TRAIL', variant: 'explode_wildly' } }, { fps: 30 });
+  assert.equal(r.spec.variant, 'slide_up');
+  assert.match(r.spec.warnings.join(' '), /explode_wildly/);
+});
+
+test('motion values are still clamped through the registry', () => {
+  assert.equal(one({ props: { value: 1, countDur: 30 } }).spec.countDur, 4.0);
+  const derived = one({ durationInFrames: 60, props: { value: 1 } }).spec;
+  assert.equal(derived.countDur, 2.5, 'a short shot still gets a legal count');
 });

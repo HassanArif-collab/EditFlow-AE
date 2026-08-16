@@ -23,7 +23,7 @@
  * a lost shotlist must never read as lost work.
  */
 import { callExtendScript } from './extendscript.js';
-import { parseShotlist, reconcile, masterPlan } from './shotlist-model.js';
+import { parseShotlist, reconcile, masterPlan, DELIVERABLE } from './shotlist-model.js';
 
 const LS_KEY = 'editflow_visuals';
 const LS_UNSAVED = 'editflow_visuals_unsaved';
@@ -40,7 +40,8 @@ const V = {
   busy: false,
   building: '',
   buildLog: [],        // per-shot outcome of the last batch
-  assetsDir: '',
+  visualsRoot: '',      // the project's visuals/ folder; every path resolves under it
+  assets: null,         // ef_vis_scanAssets result: what is actually on disk
   source: '',
   picked: {},          // shotId -> version chosen in the dropdown
   loaded: false,
@@ -88,7 +89,12 @@ export function wireVisualsTab(root) {
   };
 
   const dir = $('#vis-assets-dir');
-  if (dir) dir.oninput = (e) => { V.assetsDir = e.target.value; _save(); };
+  if (dir) dir.oninput = (e) => {
+    V.visualsRoot = e.target.value;
+    _save();
+    clearTimeout(V._scanTimer);
+    V._scanTimer = setTimeout(() => _scanAssets().then(_rerender), 400);
+  };
 
   const buildAll = $('#vis-build-all');
   if (buildAll) buildAll.onclick = () => _buildAll();
@@ -129,7 +135,7 @@ export function wireVisualsTab(root) {
 export function visualsTabInit() {
   try {
     const o = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    if (o) V.assetsDir = o.assetsDir || '';
+    if (o) V.visualsRoot = o.visualsRoot || o.assetsDir || '';
   } catch (_) { /* first run */ }
   // Don't block startup on AE; sync as soon as the bridge answers.
   sync().catch(() => {});
@@ -178,7 +184,7 @@ async function _syncNow(opts) {
 function _stateBlob() {
   return {
     version: 1,
-    assetsDir: V.assetsDir,
+    visualsRoot: V.visualsRoot,
     source: V.source,
     shots: V.shots,
     errors: V.errors,
@@ -193,7 +199,7 @@ function _applyStateBlob(o) {
   V.errors = Array.isArray(o.errors) ? o.errors : [];
   V.skipped = Array.isArray(o.skipped) ? o.skipped : [];
   V.source = o.source || '';
-  if (o.assetsDir) V.assetsDir = o.assetsDir;
+  if (o.visualsRoot || o.assetsDir) V.visualsRoot = o.visualsRoot || o.assetsDir;
   return true;
 }
 
@@ -201,7 +207,7 @@ async function _loadSavedState() {
   // assetsDir is a machine preference, not project data — always local
   try {
     const o = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    if (o && o.assetsDir) V.assetsDir = o.assetsDir;
+    if (o) V.visualsRoot = o.visualsRoot || o.assetsDir || V.visualsRoot;
   } catch (_) {}
 
   if (V.project && V.project.saved) {
@@ -221,7 +227,7 @@ async function _loadSavedState() {
 /* Returns a promise so a caller can be sure the shotlist is on disk before
    anything reads it back. A fire-and-forget write raced Refresh. */
 function _save() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify({ assetsDir: V.assetsDir })); } catch (_) {}
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ visualsRoot: V.visualsRoot })); } catch (_) {}
   const blob = _stateBlob();
   if (V.project && V.project.saved) {
     return callExtendScript('ef_vis_writeState', JSON.stringify({ data: JSON.stringify(blob) }))
@@ -236,6 +242,42 @@ async function _readProject() {
   const r = reconcile(V.shots, list);
   V.rows = r.rows;
   V.master = r.master;
+  await _scanAssets();
+}
+
+/**
+ * Ask the disk what is actually there. A brief naming a file nobody dropped
+ * in must show as waiting on its row BEFORE you press Build, rather than
+ * becoming a magenta placeholder you find in the render.
+ */
+async function _scanAssets() {
+  V.assets = null;
+  if (!V.visualsRoot || !V.shots.length) return;
+  const dirs = [...new Set(V.shots.map((s) => s.assetDir).filter(Boolean))];
+  // captures resolve from the ROOT, shot assets from assetDir — two lists,
+  // because joining a capture onto the shot folder silently finds nothing
+  const images = [...new Set(V.shots
+    .map((s) => s.sourceAnchor && s.sourceAnchor.image).filter(Boolean))];
+  if (!dirs.length && !images.length) return;
+  try {
+    V.assets = await callExtendScript('ef_vis_scanAssets',
+      JSON.stringify({ root: V.visualsRoot, dirs, images }));
+  } catch (e) {
+    V.assets = { error: _aeError(e) };
+  }
+}
+
+/** Files this shot names that are not on disk yet. */
+function _missingFor(spec) {
+  if (!spec || !V.assets || V.assets.error) return [];
+  const out = [];
+  const have = (V.assets.dirs || {})[spec.assetDir];
+  for (const name of spec.assets || []) {
+    if (!have || have.indexOf(name) < 0) out.push(name);
+  }
+  const img = spec.sourceAnchor && spec.sourceAnchor.image;
+  if (img && (V.assets.missingImages || []).indexOf(img) >= 0) out.push(img);
+  return out;
 }
 
 /* ── Rendering ── */
@@ -274,12 +316,23 @@ function _sourceRowHTML() {
 }
 
 function _assetsRowHTML() {
+  const a = V.assets;
+  const files = a && a.dirs
+    ? Object.keys(a.dirs).reduce((n, k) => n + a.dirs[k].length, 0) : 0;
+  const note = !V.visualsRoot
+    ? 'Set this to your project\'s visuals folder. Every file the brief names is looked up under it.'
+    : a && a.error ? a.error
+    : a ? `${files} file${files === 1 ? '' : 's'} found` +
+          `${(a.missingDirs || []).length ? ` · ${a.missingDirs.length} folder(s) not created yet` : ''}` +
+          `${(a.missingImages || []).length ? ` · ${a.missingImages.length} capture(s) missing` : ''}`
+    : 'Nothing to look up yet — load a brief.';
   return `
     <div class="cap-row">
-      <label class="cap-label" title="Folder holding the images your shots reference (bgSrc). Missing files still build, with a magenta placeholder.">Assets Folder</label>
-      <input type="text" class="cap-input" id="vis-assets-dir" value="${_esc(V.assetsDir)}"
-             placeholder="e.g. G:\\Content\\project-assets" style="flex:1" />
-    </div>`;
+      <label class="cap-label" title="Your project's visuals/ folder. Shot files resolve under assets/<the brief's assetDir>/; captures resolve from this root.">Visuals Folder</label>
+      <input type="text" class="cap-input" id="vis-assets-dir" value="${_esc(V.visualsRoot)}"
+             placeholder="e.g. G:\\Content\\my-video\\visuals" style="flex:1" />
+    </div>
+    <div class="cap-dim" style="font-size:10px;margin:-2px 0 6px;">${_esc(note)}</div>`;
 }
 
 function _emptyHTML() {
@@ -294,7 +347,7 @@ function _emptyHTML() {
 }
 
 function _shotTableHTML(compInfo) {
-  const fps = (compInfo && compInfo.frameRate) || 30;
+  const fps = DELIVERABLE.fps;
   const plan = masterPlan(V.rows, fps);
   const total = plan.order.reduce((a, r) => a + r.duration, 0);
   const built = V.rows.filter((r) => r.built).length;
@@ -366,6 +419,24 @@ function _shotRowHTML(r) {
     </div>`;
   }
 
+  const missing = _missingFor(s);
+  const elsewhere = s.productionRoute && s.productionRoute !== 'after_effects';
+
+  // Everything the brief said that changes what you get, made visible. A
+  // field carried but never shown is a field the web agent wrote for nothing.
+  const marks = [
+    s.placement === 'overlay'
+      ? `<span class="cap-pill" title="Sits over your footage and takes no slot in the master">overlay</span>` : '',
+    elsewhere
+      ? `<span class="cap-pill" title="${_esc(s.routeReason || 'made outside After Effects')}">${_esc(s.productionRoute)}</span>` : '',
+    missing.length
+      ? `<span class="cap-pill cap-pill-warn" title="Not on disk yet: ${_esc(missing.join(', '))}">⏳ waiting for ${missing.length} file${missing.length === 1 ? '' : 's'}</span>` : '',
+    (s.needs || []).length
+      ? `<span class="cap-pill cap-pill-warn" title="The brief says these are still to be filled: ${_esc(s.needs.join(', '))}">needs ${s.needs.length}</span>` : '',
+    (s.warnings || []).length
+      ? `<span class="cap-pill cap-pill-warn" title="${_esc(s.warnings.join(' · '))}">⚠ ${s.warnings.length}</span>` : '',
+  ].join('');
+
   return `
   <div class="vis-row${V.building === r.id ? ' vis-row-active' : ''}">
     <div class="vis-row-main">
@@ -373,6 +444,7 @@ function _shotRowHTML(r) {
       <span class="vis-id">${_esc(r.id)}</span>
       <span class="vis-summary" title="${_esc(s.scriptLine)}">${_esc(_summarize(s))}</span>
       ${s.talkingHead ? `<span class="cap-pill" title="This shot sits over you — check the framing">🗣</span>` : ''}
+      ${marks}
       ${status}
     </div>
     <div class="vis-row-actions">
@@ -409,8 +481,7 @@ function _problemsHTML() {
 /* ── Actions ── */
 
 async function _loadShotlist(text, source) {
-  const compInfo = _compInfo();
-  const parsed = parseShotlist(text, { fps: (compInfo && compInfo.frameRate) || 30 });
+  const parsed = parseShotlist(text, { fps: DELIVERABLE.fps });
   V.shots = parsed.shots;
   V.errors = parsed.errors;
   V.skipped = parsed.skipped;
@@ -438,13 +509,14 @@ function _selected(shotId) {
 }
 
 function _buildPayload(spec) {
-  const c = _compInfo() || {};
   return {
     spec,
-    width: c.width || 1920,
-    height: c.height || 1080,
-    fps: c.frameRate || 30,
-    assetsDir: V.assetsDir,
+    // Settled, not inherited: an accidentally-open vertical comp used to
+    // build the entire brief vertical. See DELIVERABLE in shotlist-model.js.
+    width: DELIVERABLE.width,
+    height: DELIVERABLE.height,
+    fps: DELIVERABLE.fps,
+    visualsRoot: V.visualsRoot,
     fontPS: _captionFont(),
     boxWidthPct: 90,
   };
@@ -498,11 +570,10 @@ async function _buildMaster() {
   if (V.busy || !V.shots.length) return;
   V.busy = true; V.error = null; V.status = 'Building master…'; _rerender();
   try {
-    const c = _compInfo() || {};
-    const fps = c.frameRate || 30;
-    const plan = masterPlan(V.rows, fps);
+    const plan = masterPlan(V.rows, DELIVERABLE.fps);
     const res = await callExtendScript('ef_vis_buildMaster', JSON.stringify({
-      order: plan.order, width: c.width || 1920, height: c.height || 1080, fps,
+      order: plan.order, width: DELIVERABLE.width,
+      height: DELIVERABLE.height, fps: DELIVERABLE.fps,
     }));
     V.status = `Master built: ${res.placed} shot${res.placed === 1 ? '' : 's'}, ${Number(res.duration).toFixed(1)}s` +
                `${res.missing && res.missing.length ? ` · gaps left for: ${res.missing.join(', ')}` : ''}.`;

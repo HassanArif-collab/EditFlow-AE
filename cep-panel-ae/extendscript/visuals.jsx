@@ -161,18 +161,32 @@ function ef_vis_activeVersionComp(shotId) {
 
 /* ── assets ── */
 
-function ef_vis_importAsset(fileName, cfg) {
+/* Resolve a file the brief named.
+ *
+ * Two bases, and they are not interchangeable:
+ *   assets[]           <visualsRoot>/<spec.assetDir>/<name>
+ *   sourceAnchor.image <visualsRoot>/<name>        (captures are shared)
+ *
+ * `rootRelative` picks the second. Joining a capture onto the shot folder
+ * finds nothing and reads as a missing file rather than a path bug. */
+function ef_vis_assetFile(fileName, cfg, spec, rootRelative) {
+    if (!fileName) return null;
+    var root = String(cfg.visualsRoot || "");
+    if (!root) return null;
+    var rel = rootRelative ? String(fileName)
+                           : ef_vis_joinPath(String((spec && spec.assetDir) || ""), String(fileName));
+    return new File(ef_vis_joinPath(root, rel));
+}
+
+function ef_vis_importAsset(fileName, cfg, spec, rootRelative) {
     if (!fileName) return null;
     var assets = ef_vis_ensureFolder(EF_VIS_ASSETS, app.project.rootFolder);
     for (var i = 1; i <= assets.numItems; i++) {
         if (String(assets.item(i).name) === String(fileName)) return assets.item(i);
     }
     try {
-        var dir = String(cfg.assetsDir || "");
-        if (!dir) return null;
-        dir = dir.replace(/[\\\/]+$/, "");
-        var f = new File(dir + "/" + fileName);
-        if (!f.exists) return null;
+        var f = ef_vis_assetFile(fileName, cfg, spec, rootRelative);
+        if (!f || !f.exists) return null;
         var item = app.project.importFile(new ImportOptions(f));
         item.parentFolder = assets;
         return item;
@@ -272,7 +286,7 @@ function ef_vis_addLetterAnimator(layer, name, matchName, value, expr) {
 
 function ef_vis_addBackground(comp, spec, cfg, missing) {
     if (spec.bgSrc) {
-        var item = ef_vis_importAsset(spec.bgSrc, cfg);
+        var item = ef_vis_importAsset(spec.bgSrc, cfg, spec, false);
         if (item) {
             var L = comp.layers.add(item);
             try {
@@ -668,6 +682,67 @@ function ef_vis_writeState(jsonStr) {
         sf.close();
         return ef_vis_json({ saved: true, wrote: true, path: String(sf.fsName) });
     } catch (e) { return ef_vis_err("writeState: " + e.toString()); }
+}
+
+/* ── the visuals folder ─────────────────────────────────────
+   Every path in a brief resolves under one root — the project's visuals/
+   folder. Two different bases, which is the part that bites:
+
+     assets[]            relative to the shot's assetDir
+     sourceAnchor.image  relative to the ROOT (captures are shared between
+                         every shot citing the same page, so they cannot
+                         live inside any one shot's folder)
+
+   Scanning up front means a brief naming a file that was never dropped in
+   is caught before the build starts, not discovered halfway through it. */
+
+function ef_vis_joinPath(a, b) {
+    var left = String(a || "").replace(/[\\\/]+$/, "");
+    var right = String(b || "").replace(/^[\\\/]+/, "");
+    if (!left) return right;
+    if (!right) return left;
+    return left + "/" + right;
+}
+
+function ef_vis_listFiles(folder) {
+    var out = [];
+    try {
+        var kids = folder.getFiles();
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i] instanceof File) out.push(String(kids[i].name));
+        }
+    } catch (e) {}
+    return out;
+}
+
+function ef_vis_scanAssets(jsonStr) {
+    try {
+        var cfg = eval("(" + jsonStr + ")");
+        var root = String(cfg.root || "");
+        if (!root) return ef_vis_err("no visuals root set");
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return ef_vis_err("visuals root not found: " + root);
+
+        var dirs = cfg.dirs || [], found = {}, missingDirs = [];
+        for (var i = 0; i < dirs.length; i++) {
+            var rel = String(dirs[i]);
+            if (!rel) continue;
+            var f = new Folder(ef_vis_joinPath(root, rel));
+            if (f.exists) found[rel] = ef_vis_listFiles(f);
+            else missingDirs.push(rel);
+        }
+
+        // capture images are named root-relative, so they are checked as
+        // whole paths rather than joined onto a shot folder
+        var images = cfg.images || [], missingImages = [];
+        for (var j = 0; j < images.length; j++) {
+            var img = new File(ef_vis_joinPath(root, String(images[j])));
+            if (!img.exists) missingImages.push(String(images[j]));
+        }
+
+        return ef_vis_json({ root: root, dirs: found,
+                             missingDirs: missingDirs, missingImages: missingImages });
+    } catch (e) { return ef_vis_err("scanAssets: " + e.toString()); }
 }
 
 /* Open a built version in the AE viewer — the panel is a control surface,

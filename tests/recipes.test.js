@@ -94,17 +94,36 @@ test('an invented recipe name is refused', () => {
   assert.match(res.errors[0], /unknown recipe/);
 });
 
-test('an invented parameter is reported, not passed to the builder', () => {
+test('an invented parameter is reported and dropped, but does not lose the shot', () => {
+  // Fatal would mean one hallucinated key costs a whole shot the model
+  // otherwise got right. Report it, drop it, build the rest.
   const res = R.validateProps('STAT_COUNTER', { value: 1, glowIntensity: 9 });
-  assert.equal(res.ok, false);
-  assert.match(res.errors.join(' '), /no parameter "glowIntensity"/);
-  assert.equal(res.props.glowIntensity, undefined);
+  assert.equal(res.ok, true);
+  assert.match(res.warnings.join(' '), /no parameter "glowIntensity"/);
+  assert.equal(res.props.glowIntensity, undefined, 'never reaches the builder');
+  assert.equal(res.props.value, 1);
 });
 
-test('an enum outside its allowed values is refused with the list', () => {
+test('the common props are recognised, not mistaken for typos', () => {
+  // bgSrc/accentColor/font travel inside props but belong to every recipe
+  const res = R.validateProps('STAT_COUNTER', { value: 1, accentColor: '#ff0000' });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.warnings, [], 'a real brief would have been rejected');
+  assert.equal(res.common.accentColor, '#ff0000');
+});
+
+test('an unapproved enum falls back to its default and says so', () => {
   const res = R.validateProps('SECTION_TITLE_CARD', { title: 'X', variant: 'explode' });
-  assert.equal(res.ok, false);
-  assert.match(res.errors.join(' '), /slide_up/);
+  assert.equal(res.ok, true, 'a cosmetic choice must not cost the title card');
+  assert.equal(res.props.variant, 'slide_up');
+  assert.match(res.warnings.join(' '), /slide_up/);
+});
+
+test('an enum with no safe default is still fatal', () => {
+  // the fallback above is only legitimate because a default exists
+  const res = R.validateProps('ASSET_REVEAL', { fit: 'squish' });
+  assert.equal(res.props.fit, 'fill', 'fit has a default, so it falls back');
+  assert.match(res.warnings.join(' '), /squish/);
 });
 
 test('an empty array where data is required is refused', () => {

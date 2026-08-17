@@ -64,7 +64,7 @@ An unsaved project cannot persist anything and the tab says so in a banner.
 
 Roughly in the order that gives the most value.
 
-2. **The agent (Step 4).** `POST /api/visuals/plan`, reusing
+1. **The agent (Step 4).** `POST /api/visuals/plan`, reusing
    `provider_service.chat(temperature=0)` exactly as
    `backend/services/subtitles/transcript_corrector.py` does. It is an
    **exception handler, not a driver**: a complete brief builds with the model
@@ -72,21 +72,21 @@ Roughly in the order that gives the most value.
    asset, or an archetype with no recipe. Guard it the same way the transcript
    corrector is guarded — it may only emit a known recipe with props that
    typecheck against the registry, and anything else is shown, not run.
-3. **Code mode (Step 5).** For `recipe: "CUSTOM"`. Static gate first (ES3 only,
+2. **Code mode (Step 5).** For `recipe: "CUSTOM"`. Static gate first (ES3 only,
    `ef_vis_` namespace, no file or network access, no project mutation outside
    its own comp), one error round-trip, every attempt lands as a version.
-4. **Voiceover in the master.** The master lays shots end to end on durations
+3. **Voiceover in the master.** The master lays shots end to end on durations
    the web agent guessed. Import the voiceover as the master's audio and make
    each row's duration editable, so drift is visible immediately.
-5. **`placement: overlay` in the master.** The field is parsed and shown but the
+4. **`placement: overlay` in the master.** The field is parsed and shown but the
    master still lays every shot as a full-frame cutaway. An overlay shot should
    sit on its own layer and consume no slot.
-6. **Contact sheet for review.** `ef_vis_renderShot` exists. Render one frame per
+5. **Contact sheet for review.** `ef_vis_renderShot` exists. Render one frame per
    shot and show `qaFocus` beside each, so reviewing twenty shots is not twenty
    comps opened by hand.
-7. **Cancel on Build All**, and **script-change detection** (the sidecar stores
+6. **Cancel on Build All**, and **script-change detection** (the sidecar stores
    `scriptLine`; diff on load and flag changed rows as "rebuild?").
-8. **The last mile** — how the master reaches the edit (Dynamic Link vs render).
+7. **The last mile** — how the master reaches the edit (Dynamic Link vs render).
    Undecided, flagged so it is a decision rather than a surprise.
 
 ### Verified live in AE 25.6 (2026-08-17)

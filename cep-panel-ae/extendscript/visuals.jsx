@@ -240,6 +240,75 @@ function ef_vis_centerAnchor(layer, comp, xFrac, yFrac, atTime) {
     layer.property("Position").setValue([comp.width * xFrac, comp.height * yFrac]);
 }
 
+/* ── the style bible ─────────────────────────────────────────
+   The theme lives in manifest.json at the visuals root, written by the
+   Content Prompts side. Without it every recipe built in default colours
+   while the generated stills around it followed the theme, so a finished
+   film did not match its own images.
+
+   Read here rather than handed down from the panel, so a code-writing agent
+   can call ef_vis_styleBible() and reach the same source the recipes do.
+   Hardcoded hexes in generated code drift the moment the theme changes.
+
+   `colors` is null until the user has set three hexes. Half a palette is
+   worse than none, so that case falls back to the built-in defaults
+   entirely rather than theming some layers and not others. */
+
+var EF_VIS_STYLE = null;        // last parsed bible
+var EF_VIS_STYLE_ROOT = null;   // the root it came from; null = never looked
+
+function ef_vis_hexToRgb(hex, fallback) {
+    var m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || ""));
+    if (!m) return fallback;
+    var n = parseInt(m[1], 16);
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+function ef_vis_styleBible(root) {
+    var r = String(root || EF_VIS_STYLE_ROOT || "");
+    if (EF_VIS_STYLE_ROOT === r) return EF_VIS_STYLE;   // cached, hit or miss
+    EF_VIS_STYLE_ROOT = r;
+    EF_VIS_STYLE = null;
+    if (!r) return null;
+    try {
+        var f = new File(ef_vis_joinPath(r, "manifest.json"));
+        if (!f.exists) return null;
+        f.encoding = "UTF-8";
+        f.open("r");
+        var txt = f.read();
+        f.close();
+        var man = eval("(" + txt + ")");
+        EF_VIS_STYLE = (man && man.styleBible) ? man.styleBible : null;
+    } catch (e) { EF_VIS_STYLE = null; }
+    return EF_VIS_STYLE;
+}
+
+/**
+ * A themed colour, or the built-in default.
+ *
+ * A colour the SHOT names always wins — it is more specific than the film's
+ * theme. That precedence is applied by the caller, which passes the shot's
+ * value as `fallback` only when the shot actually set one.
+ */
+function ef_vis_styleColor(cfg, role, fallback) {
+    var sb = ef_vis_styleBible(cfg && cfg.visualsRoot);
+    if (!sb || !sb.colors) return fallback;
+    return ef_vis_hexToRgb(sb.colors[role], fallback);
+}
+
+/* The builders use several quieter greys below full text colour. Mixing the
+   themed ink toward the themed background keeps that hierarchy intact on a
+   light theme, where a fixed grey would vanish. */
+function ef_vis_styleInk(cfg, weight, fallback) {
+    var ink = ef_vis_styleColor(cfg, "text", null);
+    if (!ink) return fallback;
+    var bg = ef_vis_styleColor(cfg, "bg", [0.04, 0.05, 0.08]);
+    var w = (weight == null) ? 1 : weight;
+    return [ink[0] * w + bg[0] * (1 - w),
+            ink[1] * w + bg[1] * (1 - w),
+            ink[2] * w + bg[2] * (1 - w)];
+}
+
 /* ── keyframes ───────────────────────────────────────────────
    Real keyframes, not expressions.
 
@@ -529,8 +598,9 @@ function ef_vis_addBackground(comp, spec, cfg, missing) {
         ph.moveToEnd();
         return ph;
     }
-    var bg = comp.layers.addSolid(cfg.bgColor || [0.04, 0.05, 0.08], "BG",
-                                 comp.width, comp.height, 1);
+    var bg = comp.layers.addSolid(
+        ef_vis_styleColor(cfg, "bg", cfg.bgColor || [0.04, 0.05, 0.08]),
+        "BG", comp.width, comp.height, 1);
     bg.moveToEnd();
     return bg;
 }
@@ -544,7 +614,7 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
     var numSize = Math.round(comp.height * 0.16);
     var num = comp.layers.addText("0");
     num.name = "Value";
-    ef_vis_styleText(num, cfg, spec, numSize, [1, 1, 1]);
+    ef_vis_styleText(num, cfg, spec, numSize, ef_vis_styleInk(cfg, 1, [1, 1, 1]));
     ef_vis_buildCounterRig(num, comp, spec.value, spec.countDur, spec.prefix, "", 0);
     // Measure the FINAL number, not the "0" it starts on. Sampling at 0.1s
     // sized the layer to one digit, so "Rs 8,484" then ran off the frame.
@@ -565,7 +635,7 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
     if (spec.unit) {
         var unit = comp.layers.addText(String(spec.unit));
         unit.name = "Unit";
-        ef_vis_styleText(unit, cfg, spec, Math.round(comp.height * 0.032), [0.75, 0.78, 0.82]);
+        ef_vis_styleText(unit, cfg, spec, Math.round(comp.height * 0.032), ef_vis_styleInk(cfg, 0.72, [0.75, 0.78, 0.82]));
         ef_vis_centerAnchor(unit, comp, 0.5, 0.62, 0.1);
         ef_vis_kfFade(unit, (spec.countDur || 3), 0.5, 70);
     }
@@ -608,7 +678,7 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
     arect.property("ADBE Vector Rect Size").setValue([plotW, 3]);
     arect.property("ADBE Vector Rect Position").setValue([0, 0]);
     var afill = ag.addProperty("ADBE Vector Graphic - Fill");
-    afill.property("ADBE Vector Fill Color").setValue([0.45, 0.48, 0.55]);
+    afill.property("ADBE Vector Fill Color").setValue(ef_vis_styleInk(cfg, 0.42, [0.45, 0.48, 0.55]));
     axis.property("Position").setValue([comp.width / 2, baseY]);
     ef_vis_kf(axis.property("Scale"), [[0, [0, 100]], [0.4, [100, 100]]], "out");
 
@@ -642,7 +712,7 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
             var lab = comp.layers.addText(String(b.label));
             lab.name = "Label " + (i + 1);
             ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.028),
-                             b.accent ? spec.accent : [0.8, 0.83, 0.88]);
+                             b.accent ? spec.accent : ef_vis_styleInk(cfg, 0.80, [0.8, 0.83, 0.88]));
             ef_vis_centerAnchor(lab, comp, cx / comp.width, (baseY + comp.height * 0.05) / comp.height, 0.1);
             // labels arrive AFTER the data is readable
             ef_vis_kfFade(lab, delay + (spec.growDur || 0.9), 0.35, 100);
@@ -651,7 +721,7 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
         var val = comp.layers.addText("0");
         val.name = "Value " + (i + 1);
         ef_vis_styleText(val, cfg, spec, Math.round(comp.height * 0.030),
-                         b.accent ? [1, 1, 1] : [0.72, 0.75, 0.8]);
+                         b.accent ? [1, 1, 1] : ef_vis_styleInk(cfg, 0.72, [0.72, 0.75, 0.8]));
         ef_vis_buildCounterRig(val, comp, b.value, spec.growDur || 0.9, "", "", delay);
         var valY = (baseY - h - comp.height * 0.035) / comp.height;
         ef_vis_centerAnchor(val, comp, cx / comp.width, valY, 0.1);
@@ -661,7 +731,7 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
     if (spec.caption) {
         var cap = comp.layers.addText(String(spec.caption));
         cap.name = "Caption";
-        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), ef_vis_styleInk(cfg, 0.88, [0.85, 0.88, 0.92]));
         ef_vis_centerAnchor(cap, comp, 0.5, 0.16, 0.1);
         ef_vis_fitText(cap, comp, cfg, 0.1);
     }
@@ -676,7 +746,7 @@ function ef_vis_buildTitleCard(comp, spec, cfg, missing) {
 
     var title = comp.layers.addText(String(spec.title));
     title.name = "Title";
-    ef_vis_styleText(title, cfg, spec, Math.round(comp.height * 0.10), [1, 1, 1]);
+    ef_vis_styleText(title, cfg, spec, Math.round(comp.height * 0.10), ef_vis_styleInk(cfg, 1, [1, 1, 1]));
     ef_vis_centerAnchor(title, comp, 0.5, 0.47, 0.1);
     ef_vis_fitText(title, comp, cfg, 0.1);
 
@@ -1028,7 +1098,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
     ar.property("ADBE Vector Rect Size").setValue([plotW, 3]);
     ar.property("ADBE Vector Rect Position").setValue([0, 0]);
     ag.addProperty("ADBE Vector Graphic - Fill")
-      .property("ADBE Vector Fill Color").setValue([0.45, 0.48, 0.55]);
+      .property("ADBE Vector Fill Color").setValue(ef_vis_styleInk(cfg, 0.42, [0.45, 0.48, 0.55]));
     axis.property("Position").setValue([comp.width / 2, baseY]);
     ef_vis_kf(axis.property("Scale"), [[0, [0, 100]], [0.4, [100, 100]]], "out");
 
@@ -1077,7 +1147,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
 
     var val = comp.layers.addText(ef_vis_groupDigits(Number(pts[hi].value) || 0));
     val.name = "Callout value";
-    ef_vis_styleText(val, cfg, spec, Math.round(comp.height * 0.038), [1, 1, 1]);
+    ef_vis_styleText(val, cfg, spec, Math.round(comp.height * 0.038), ef_vis_styleInk(cfg, 1, [1, 1, 1]));
     ef_vis_centerAnchor(val, comp,
         (verts[hi][0] + comp.width / 2) / comp.width,
         (verts[hi][1] + comp.height / 2 - comp.height * 0.055) / comp.height, 0.1);
@@ -1088,7 +1158,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
         if (!pts[i].label) continue;
         var lab = comp.layers.addText(String(pts[i].label));
         lab.name = "Label " + (i + 1);
-        ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.026), [0.78, 0.81, 0.86]);
+        ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.026), ef_vis_styleInk(cfg, 0.78, [0.78, 0.81, 0.86]));
         ef_vis_centerAnchor(lab, comp,
             (verts[i][0] + comp.width / 2) / comp.width,
             (baseY + comp.height * 0.05) / comp.height, 0.1);
@@ -1098,7 +1168,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
     if (spec.caption) {
         var cap = comp.layers.addText(String(spec.caption));
         cap.name = "Caption";
-        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), ef_vis_styleInk(cfg, 0.88, [0.85, 0.88, 0.92]));
         ef_vis_centerAnchor(cap, comp, 0.5, 0.16, 0.1);
         ef_vis_fitText(cap, comp, cfg, 0.1);
     }
@@ -1132,7 +1202,7 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
         var num = comp.layers.addText("0");
         num.name = (i ? "Right" : "Left") + " value";
         ef_vis_styleText(num, cfg, spec, Math.round(comp.height * 0.11),
-                         (i === 1) ? [1, 1, 1] : [0.82, 0.85, 0.9]);
+                         (i === 1) ? [1, 1, 1] : ef_vis_styleInk(cfg, 0.84, [0.82, 0.85, 0.9]));
         var cd = Math.max(1.2, Math.min(2.4, comp.duration * 0.35));
         ef_vis_buildCounterRig(num, comp, Number(s.value) || 0, cd,
                                String(s.prefix || ""), "", at);
@@ -1144,7 +1214,7 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
         if (s.unit) {
             var u = comp.layers.addText(String(s.unit));
             u.name = (i ? "Right" : "Left") + " unit";
-            ef_vis_styleText(u, cfg, spec, Math.round(comp.height * 0.028), [0.72, 0.75, 0.8]);
+            ef_vis_styleText(u, cfg, spec, Math.round(comp.height * 0.028), ef_vis_styleInk(cfg, 0.72, [0.72, 0.75, 0.8]));
             ef_vis_centerAnchor(u, comp, cx, 0.63, 0.1);
             ef_vis_kfFade(u, at + cd * 0.8, 0.4, 70);
         }
@@ -1158,14 +1228,14 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
     var rr = rg.addProperty("ADBE Vector Shape - Rect");
     rr.property("ADBE Vector Rect Size").setValue([2, comp.height * 0.30]);
     rg.addProperty("ADBE Vector Graphic - Fill")
-      .property("ADBE Vector Fill Color").setValue([0.35, 0.38, 0.45]);
+      .property("ADBE Vector Fill Color").setValue(ef_vis_styleInk(cfg, 0.34, [0.35, 0.38, 0.45]));
     rule.property("Position").setValue([comp.width / 2, comp.height * 0.50]);
     ef_vis_kf(rule.property("Scale"), [[0.3, [100, 0]], [0.8, [100, 100]]], "out");
 
     if (spec.caption) {
         var cap = comp.layers.addText(String(spec.caption));
         cap.name = "Caption";
-        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), ef_vis_styleInk(cfg, 0.88, [0.85, 0.88, 0.92]));
         ef_vis_centerAnchor(cap, comp, 0.5, 0.18, 0.1);
         ef_vis_fitText(cap, comp, cfg, 0.1);
     }
@@ -1207,7 +1277,7 @@ function ef_vis_buildTextAnnotation(comp, spec, cfg, missing) {
 
     var t = comp.layers.addText(String(spec.text || ""));
     t.name = "Label";
-    ef_vis_styleText(t, cfg, spec, px, [1, 1, 1]);
+    ef_vis_styleText(t, cfg, spec, px, ef_vis_styleInk(cfg, 1, [1, 1, 1]));
     ef_vis_centerAnchor(t, comp, at[0], at[1], 0.1);
     ef_vis_fitText(t, comp, cfg, 0.1);
 
@@ -1215,7 +1285,7 @@ function ef_vis_buildTextAnnotation(comp, spec, cfg, missing) {
     if (spec.sub) {
         sub = comp.layers.addText(String(spec.sub));
         sub.name = "Sub";
-        ef_vis_styleText(sub, cfg, spec, Math.round(px * 0.55), [0.78, 0.81, 0.86]);
+        ef_vis_styleText(sub, cfg, spec, Math.round(px * 0.55), ef_vis_styleInk(cfg, 0.78, [0.78, 0.81, 0.86]));
         ef_vis_centerAnchor(sub, comp, at[0], at[1] + (px * 1.15) / comp.height, 0.1);
     }
 
@@ -1234,7 +1304,7 @@ function ef_vis_buildTextAnnotation(comp, spec, cfg, missing) {
         prect.property("ADBE Vector Rect Size").setValue([pw, ph]);
         try { prect.property("ADBE Vector Rect Roundness").setValue(Math.round(px * 0.22)); } catch (eRo) {}
         pg.addProperty("ADBE Vector Graphic - Fill")
-          .property("ADBE Vector Fill Color").setValue([0.04, 0.05, 0.08]);
+          .property("ADBE Vector Fill Color").setValue(ef_vis_styleColor(cfg, "bg", [0.04, 0.05, 0.08]));
         plate.property("Opacity").setValue(78);
         plate.property("Position").setValue(
             [comp.width * at[0], comp.height * at[1] + (sub ? px * 0.45 : 0)]);
@@ -1319,7 +1389,7 @@ function ef_vis_buildPieChart(comp, spec, cfg, missing) {
         // text over the gold slice and half the word vanished — the slice being
         // pulled out already says which one the script means.
         ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.030),
-                         L.accent ? [1, 1, 1] : [0.78, 0.81, 0.87]);
+                         L.accent ? [1, 1, 1] : ef_vis_styleInk(cfg, 0.78, [0.78, 0.81, 0.87]));
 
         // Sit OUTSIDE the rim and read away from it: a label on the right is
         // left-aligned at the edge, one on the left is right-aligned. Centring
@@ -1347,7 +1417,7 @@ function ef_vis_buildPieChart(comp, spec, cfg, missing) {
     if (spec.caption) {
         var cap = comp.layers.addText(String(spec.caption));
         cap.name = "Caption";
-        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), ef_vis_styleInk(cfg, 0.88, [0.85, 0.88, 0.92]));
         ef_vis_centerAnchor(cap, comp, 0.5, 0.14, 0.1);
         ef_vis_fitText(cap, comp, cfg, 0.1);
     }
@@ -1395,7 +1465,7 @@ function ef_vis_buildFlowDiagram(comp, spec, cfg, missing) {
             cg.addProperty("ADBE Vector Shape - Group")
               .property("ADBE Vector Shape").setValue(line);
             var strk = cg.addProperty("ADBE Vector Graphic - Stroke");
-            strk.property("ADBE Vector Stroke Color").setValue([0.50, 0.54, 0.62]);
+            strk.property("ADBE Vector Stroke Color").setValue(ef_vis_styleInk(cfg, 0.50, [0.50, 0.54, 0.62]));
             strk.property("ADBE Vector Stroke Width").setValue(Math.max(2, comp.height * 0.004));
             conn.property("Position").setValue([bx - boxW / 2 - gap / 2, cy]);
             var trim = conn.property("ADBE Root Vectors Group")
@@ -1414,7 +1484,7 @@ function ef_vis_buildFlowDiagram(comp, spec, cfg, missing) {
         bgp.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")
            .setValue(steps[i].accent ? (spec.accent || [0.72, 0.53, 0.04]) : [0.16, 0.18, 0.24]);
         var bs = bgp.addProperty("ADBE Vector Graphic - Stroke");
-        bs.property("ADBE Vector Stroke Color").setValue([0.34, 0.38, 0.46]);
+        bs.property("ADBE Vector Stroke Color").setValue(ef_vis_styleInk(cfg, 0.34, [0.34, 0.38, 0.46]));
         bs.property("ADBE Vector Stroke Width").setValue(2);
         box.property("Position").setValue([bx, cy]);
         ef_vis_kf(box.property("Scale"), [[at, [88, 88]], [at + 0.4, [100, 100]]], "smooth");
@@ -1423,7 +1493,7 @@ function ef_vis_buildFlowDiagram(comp, spec, cfg, missing) {
         var lab2 = comp.layers.addText(steps[i].label);
         lab2.name = "Step label " + (i + 1);
         ef_vis_styleText(lab2, cfg, spec, Math.round(comp.height * 0.028),
-                         steps[i].accent ? [0.06, 0.07, 0.10] : [0.90, 0.92, 0.95]);
+                         steps[i].accent ? [0.06, 0.07, 0.10] : ef_vis_styleInk(cfg, 0.92, [0.90, 0.92, 0.95]));
         ef_vis_centerAnchor(lab2, comp, bx / comp.width, cy / comp.height, 0.1);
         // fit to the BOX, not the frame, or a long label runs over its neighbour
         ef_vis_fitText(lab2, comp, { boxWidthPct: (boxW * 0.86) / comp.width * 100 }, 0.1);
@@ -1433,7 +1503,7 @@ function ef_vis_buildFlowDiagram(comp, spec, cfg, missing) {
     if (spec.caption) {
         var cap2 = comp.layers.addText(String(spec.caption));
         cap2.name = "Caption";
-        ef_vis_styleText(cap2, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_styleText(cap2, cfg, spec, Math.round(comp.height * 0.034), ef_vis_styleInk(cfg, 0.88, [0.85, 0.88, 0.92]));
         ef_vis_centerAnchor(cap2, comp, 0.5, 0.20, 0.1);
         ef_vis_fitText(cap2, comp, cfg, 0.1);
     }
@@ -1449,6 +1519,13 @@ function ef_vis_buildShot(jsonStr) {
         var spec = cfg.spec;
         if (!spec || !spec.id) return ef_vis_err("no spec");
 
+        // The theme's accent applies unless this shot named its own. Done once
+        // here so every builder downstream just reads spec.accent.
+        if (!spec._accentFromShot) {
+            spec.accent = ef_vis_styleColor(cfg, "accent",
+                spec.accent || [0.72, 0.53, 0.04]);
+        }
+
         var w = cfg.width || 1920, h = cfg.height || 1080, fps = cfg.fps || 30;
         var folder = ef_vis_ensureShotFolder(spec.id);
         var name = ef_vis_nextVersionName(spec.id, ef_vis_listVersions(spec.id));
@@ -1458,7 +1535,7 @@ function ef_vis_buildShot(jsonStr) {
 
         var comp = app.project.items.addComp(name, w, h, 1, Math.max(spec.duration || 5, 0.5), fps);
         comp.parentFolder = folder;
-        comp.bgColor = cfg.bgColor || [0.04, 0.05, 0.08];
+        comp.bgColor = ef_vis_styleColor(cfg, "bg", cfg.bgColor || [0.04, 0.05, 0.08]);
 
         // The brief separates recipe (what AE builds) from archetype (why the
         // script needs the shot). Prefer the recipe; fall back to archetype so

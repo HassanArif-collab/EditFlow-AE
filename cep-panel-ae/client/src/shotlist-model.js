@@ -187,6 +187,9 @@ export function normalizeShot(raw, opts) {
     ...checked.props,
     bgSrc: checked.common.bgSrc,
     accent: hexToRgb(checked.common.accentColor, [0.72, 0.53, 0.04]),
+    // A colour this shot names beats the film's theme; without the flag the
+    // builder cannot tell "the default" from "deliberately this colour".
+    _accentFromShot: Object.prototype.hasOwnProperty.call(p, 'accentColor'),
     font: checked.common.font,
     ...briefFields(raw, warnings),
   };

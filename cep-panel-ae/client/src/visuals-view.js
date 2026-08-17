@@ -22,8 +22,10 @@
  * Anything the project contains is shown even when the shotlist is gone —
  * a lost shotlist must never read as lost work.
  */
+import { apiPost } from './api.js';
 import { callExtendScript } from './extendscript.js';
 import { parseShotlist, reconcile, masterPlan, DELIVERABLE } from './shotlist-model.js';
+import { RECIPES } from './recipes.js';
 
 const LS_KEY = 'editflow_visuals';
 const LS_UNSAVED = 'editflow_visuals_unsaved';
@@ -113,6 +115,9 @@ export function wireVisualsTab(root) {
 
   const forget = $('#vis-forget');
   if (forget) forget.onclick = () => _forgetShotlist();
+
+  const fill = $('#vis-fill');
+  if (fill) fill.onclick = () => _fillGaps();
 
   root.querySelectorAll('.vis-build-one').forEach((b) => {
     b.onclick = (e) => _buildOne(e.currentTarget.dataset.shot);
@@ -305,6 +310,8 @@ function _sourceRowHTML() {
       <button id="vis-paste-btn" class="cap-btn cap-btn-secondary">📋 Paste</button>
       <button id="vis-refresh" class="cap-btn cap-btn-secondary" title="Re-read this project — what is built, and which version is active">↻ Refresh</button>
       ${V.shots.length ? `<button id="vis-forget" class="cap-btn cap-btn-secondary" title="Forget the loaded shotlist. Your built comps are untouched.">Forget shotlist</button>` : ''}
+      ${_gapCount() ? `<button id="vis-fill" class="cap-btn cap-btn-secondary" ${V.busy ? 'disabled' : ''}
+              title="Ask the local model to fill in what the brief left blank. Complete shots are not touched.">✨ Fill ${_gapCount()} gap${_gapCount() === 1 ? '' : 's'}</button>` : ''}
     </div>
     ${V.source ? `<div class="cap-dim" style="font-size:11px;margin-bottom:6px;">Shotlist <strong>${_esc(V.source)}</strong> — ${V.shots.length} shot${V.shots.length === 1 ? '' : 's'}</div>` : ''}
     ${V._showPaste ? `<div class="cap-paste-area">
@@ -433,6 +440,8 @@ function _shotRowHTML(r) {
       ? `<span class="cap-pill cap-pill-warn" title="Not on disk yet: ${_esc(missing.join(', '))}">⏳ waiting for ${missing.length} file${missing.length === 1 ? '' : 's'}</span>` : '',
     (s.needs || []).length
       ? `<span class="cap-pill cap-pill-warn" title="The brief says these are still to be filled: ${_esc(s.needs.join(', '))}">needs ${s.needs.length}</span>` : '',
+    (s.filledByAgent || []).length
+      ? `<span class="cap-pill" title="The model supplied: ${_esc(s.filledByAgent.join(', '))} — check these before building">✨ ${s.filledByAgent.length}</span>` : '',
     (s.warnings || []).length
       ? `<span class="cap-pill cap-pill-warn" title="${_esc(s.warnings.join(' · '))}">⚠ ${s.warnings.length}</span>` : '',
   ].join('');
@@ -493,6 +502,70 @@ async function _loadShotlist(text, source) {
   _rerender();
   await _save();
   return sync({ force: false });
+}
+
+/** Shots the brief left incomplete. Zero means the model is not needed. */
+function _gapCount() {
+  return V.shots.filter((s) => {
+    const r = RECIPES[String(s.recipe || '').toUpperCase()];
+    if (!r) return false;
+    if ((s.needs || []).length || String(s.note || '').trim()) return true;
+    return Object.keys(r.params || {}).some(
+      (k) => r.params[k].required && (s[k] === undefined || s[k] === '' ));
+  }).length;
+}
+
+/**
+ * The AI editor. It fills gaps and nothing else — a complete brief never
+ * reaches the model, which is why the pipeline works with it switched off.
+ * Whatever comes back is typechecked before it can be built.
+ */
+async function _fillGaps() {
+  if (V.busy || !V.shots.length) return;
+  V.busy = true; V.error = null; V.status = 'Asking the model about the gaps…'; _rerender();
+  let status = null, problem = null;
+  try {
+    // props are flattened onto the spec for the builders; the model wants
+    // them nested, the way the brief wrote them
+    const payload = V.shots.map((s) => {
+      const r = RECIPES[String(s.recipe || '').toUpperCase()] || { params: {} };
+      const props = {};
+      for (const k of Object.keys(r.params || {})) if (s[k] !== undefined) props[k] = s[k];
+      return { id: s.id, recipe: s.recipe, scriptLine: s.scriptLine,
+               note: s.note, needs: s.needs || [], props };
+    });
+    const resp = await apiPost('/api/visuals/fill',
+      { shots: payload, recipes: RECIPES }, { timeoutMs: 300000 });
+
+    const byId = new Map((resp.shots || []).map((s) => [s.id, s]));
+    for (const spec of V.shots) {
+      const got = byId.get(spec.id);
+      if (!got || !got.filledByAgent) continue;
+      Object.assign(spec, got.props);
+      spec.needs = got.needs || [];
+      spec.filledByAgent = got.filledByAgent;
+    }
+
+    const n = (resp.filled || []).length;
+    status = n
+      ? `Filled ${n} shot${n === 1 ? '' : 's'} — check the values before building.`
+      : 'Nothing the model could fill.';
+    if ((resp.refused || []).length) {
+      // a refusal is the guard working, so it is shown rather than buried
+      problem = `Refused ${resp.refused.length}: ${resp.refused[0].why}`;
+    }
+    await _save();
+  } catch (e) {
+    problem = _aeError(e);
+  } finally {
+    V.busy = false;
+    // sync clears V.error as part of reporting its own health, so the
+    // outcome is written AFTER it — otherwise a refusal vanished silently
+    await sync({ force: false });
+    if (status) V.status = status;
+    if (problem) V.error = problem;
+    _rerender();
+  }
 }
 
 function _forgetShotlist() {
@@ -650,6 +723,8 @@ export const _test = {
   setActive: _setActive,
   deleteVersion: _deleteVersion,
   clearAll: _clearAll,
+  fillGaps: _fillGaps,
+  gapCount: _gapCount,
   pick: (shotId, version) => { V.picked[shotId] = version; },
 };
 

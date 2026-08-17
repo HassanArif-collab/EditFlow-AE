@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from .config import init_dirs
-from .routes import diag, models_routes, providers, subtitles, whisper_admin, ws
+from .routes import diag, models_routes, providers, subtitles, visuals, whisper_admin, ws
 
 
 def _bridge_enabled() -> bool:
@@ -126,6 +126,7 @@ app.include_router(models_routes.router, prefix="/api")
 app.include_router(providers.router, prefix="/api")
 app.include_router(whisper_admin.router, prefix="/api")
 app.include_router(subtitles.router, prefix="/api")
+app.include_router(visuals.router, prefix="/api")
 app.include_router(diag.router, prefix="/api")
 if _bridge_enabled():
     from .routes import ae_bridge

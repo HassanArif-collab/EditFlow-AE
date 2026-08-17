@@ -61,6 +61,6 @@ def test_backend_only_serves_the_ae_panel():
     coming back."""
     routes = {p.stem for p in (REPO / "backend" / "routes").glob("*.py")}
     allowed = {"__init__", "ae_bridge", "diag", "models_routes", "providers",
-               "subtitles", "whisper_admin", "ws"}
+               "subtitles", "visuals", "whisper_admin", "ws"}
     unexpected = routes - allowed
     assert not unexpected, f"unexpected backend routes: {sorted(unexpected)}"

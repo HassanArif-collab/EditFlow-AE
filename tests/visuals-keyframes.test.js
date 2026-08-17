@@ -291,3 +291,91 @@ test('no builder writes an animation expression any more', () => {
   assert.ok(/Source Text"\)\.expression/.test(code),
     'and it is on Source Text, where AE gives no alternative');
 });
+
+/* ── the style bible ────────────────────────────────────────────────
+   The theme is written by the other repo into manifest.json at the visuals
+   root. Before this, every recipe built in default colours while the
+   generated stills around it followed the theme — a film that did not match
+   its own images. */
+
+function withManifest(json, fn) {
+  const files = json === null ? {} : { 'G:/vis/manifest.json': json };
+  sandbox.File = function (p) {
+    const path = String(p);
+    this.fsName = path;
+    Object.defineProperty(this, 'exists', { get: () => path in files });
+    this.open = () => true;
+    this.read = () => files[path];
+    this.close = () => {};
+  };
+  // the cache is keyed on the root, so reset it between cases
+  sandbox.EF_VIS_STYLE = null;
+  sandbox.EF_VIS_STYLE_ROOT = null;
+  try { return fn(); } finally { delete sandbox.File; }
+}
+
+const BIBLE = JSON.stringify({
+  styleBible: {
+    theme: 'Archival scrapbook',
+    palette: '#F5E6D3 #2D1B0E #C0392B',
+    colors: { bg: '#F5E6D3', text: '#2D1B0E', accent: '#C0392B' },
+  },
+});
+
+test('the theme is read from manifest.json at the visuals root', () => {
+  withManifest(BIBLE, () => {
+    const sb = sandbox.ef_vis_styleBible('G:/vis');
+    assert.equal(sb.theme, 'Archival scrapbook');
+    const bg = sandbox.ef_vis_styleColor({ visualsRoot: 'G:/vis' }, 'bg', [0, 0, 0]);
+    assert.ok(Math.abs(bg[0] - 0xF5 / 255) < 0.001, `got ${bg}`);
+    assert.ok(Math.abs(bg[1] - 0xE6 / 255) < 0.001);
+  });
+});
+
+test('a code-writing agent can reach the same bible with no argument', () => {
+  // the whole reason it lives in the jsx: generated code that hardcodes hexes
+  // drifts the moment the theme changes
+  withManifest(BIBLE, () => {
+    sandbox.ef_vis_styleBible('G:/vis');
+    assert.equal(sandbox.ef_vis_styleBible().theme, 'Archival scrapbook');
+  });
+});
+
+test('no manifest means the built-in defaults, not a broken colour', () => {
+  withManifest(null, () => {
+    const bg = sandbox.ef_vis_styleColor({ visualsRoot: 'G:/vis' }, 'bg', [0.04, 0.05, 0.08]);
+    assert.deepEqual(Array.from(bg), [0.04, 0.05, 0.08]);
+  });
+});
+
+test('a half-set palette falls back entirely rather than theming some layers', () => {
+  // colors is null until three hexes are set; theming the background but not
+  // the text is worse than theming nothing
+  withManifest(JSON.stringify({ styleBible: { theme: 'x', colors: null } }), () => {
+    const bg = sandbox.ef_vis_styleColor({ visualsRoot: 'G:/vis' }, 'bg', [0.04, 0.05, 0.08]);
+    assert.deepEqual(Array.from(bg), [0.04, 0.05, 0.08]);
+    const ink = sandbox.ef_vis_styleInk({ visualsRoot: 'G:/vis' }, 1, [1, 1, 1]);
+    assert.deepEqual(Array.from(ink), [1, 1, 1]);
+  });
+});
+
+test('quieter greys stay readable on a light theme', () => {
+  // a fixed grey vanishes on paper; the ink is mixed toward the background
+  // so the hierarchy survives
+  withManifest(BIBLE, () => {
+    const cfg = { visualsRoot: 'G:/vis' };
+    const full = sandbox.ef_vis_styleInk(cfg, 1, [1, 1, 1]);
+    const quiet = sandbox.ef_vis_styleInk(cfg, 0.7, [0.8, 0.8, 0.8]);
+    assert.ok(quiet[0] > full[0], 'quieter means closer to the paper, not to white');
+    assert.ok(quiet[0] < 0xF5 / 255, 'but still darker than the paper itself');
+  });
+});
+
+test('a shot that names its own colour beats the theme', () => {
+  withManifest(BIBLE, () => {
+    const themed = sandbox.ef_vis_styleColor({ visualsRoot: 'G:/vis' }, 'accent', [0, 1, 0]);
+    assert.ok(Math.abs(themed[0] - 0xC0 / 255) < 0.001, 'theme applies by default');
+    // buildShot only themes the accent when the shot did not set one
+    assert.ok(Math.abs(themed[1] - 0x39 / 255) < 0.001);
+  });
+});

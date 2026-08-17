@@ -97,6 +97,10 @@ function openPanel(ae, store) {
   };
   const view = loadEsm(SRC, {
     callExtendScript: (fn, arg) => ae.call(fn, arg),
+    // the AI editor's endpoint; the fake returns the shots untouched, so
+    // these tests keep covering the path where the model is not involved
+    apiPost: async (_url, body) => (ae.fill ? ae.fill(body)
+      : { shots: body.shots, filled: [], refused: [], skipped: body.shots.length }),
     parseShotlist: MODEL.parseShotlist,
     reconcile: MODEL.reconcile,
     masterPlan: MODEL.masterPlan,
@@ -275,4 +279,88 @@ test('the master is built from the active versions and reports its gaps', async 
   const plan = MODEL.masterPlan(v._test.state().rows, 30);
   assert.deepEqual(plan.missing, ['shot_02']);
   assert.equal(plan.order[1].startTime, 5, 'shot_02 keeps its slot');
+});
+
+/* ── the AI editor ──────────────────────────────────────────────────
+   It fills gaps and nothing else. The pipeline working with the model
+   switched off is the whole design, so the case that matters most is the
+   one where it never runs. */
+
+const GAPPY = JSON.stringify({ shots: [
+  { id: 'a', archetype: 'STAT_COUNTER', durationInFrames: 150,
+    scriptLine: 'That leaves 8,484 a month.', props: { value: 8484, title: 'Take home' } },
+  { id: 'b', archetype: 'SECTION_TITLE_CARD', durationInFrames: 120,
+    scriptLine: 'Where it goes.', props: { title: 'Where it goes' },
+    needs: ['props.supporting'] },
+] });
+
+test('a complete brief shows no gaps and never calls the model', async () => {
+  const ae = fakeAE();
+  let called = false;
+  ae.fill = () => { called = true; return { shots: [], filled: [], refused: [] }; };
+  const v = openPanel(ae, {});
+  await v.sync({ force: true });
+  await v._test.loadShotlist(SHOTLIST, 'x.json');
+  assert.equal(v._test.gapCount(), 0, 'nothing to fill');
+  assert.equal(called, false, 'and so the model is not consulted');
+});
+
+test('a declared need is counted as a gap', async () => {
+  const v = openPanel(fakeAE(), {});
+  await v.sync({ force: true });
+  await v._test.loadShotlist(GAPPY, 'x.json');
+  assert.equal(v._test.gapCount(), 1, 'only shot b asked for anything');
+});
+
+test('what the model fills lands on the shot and clears the need', async () => {
+  const ae = fakeAE();
+  ae.fill = (body) => ({
+    shots: body.shots.map((s) => (s.id === 'b'
+      ? { ...s, props: { ...s.props, supporting: 'Rent, food, transport' },
+          needs: [], filledByAgent: ['supporting'] }
+      : s)),
+    filled: [{ id: 'b', props: { supporting: 'Rent, food, transport' } }],
+    refused: [], skipped: 1,
+  });
+  const v = openPanel(ae, {});
+  await v.sync({ force: true });
+  await v._test.loadShotlist(GAPPY, 'x.json');
+  await v._test.fillGaps();
+  const b = v._test.state().shots.find((s) => s.id === 'b');
+  assert.equal(b.supporting, 'Rent, food, transport');
+  assert.deepEqual(b.needs, [], 'the gap is closed');
+  assert.deepEqual(b.filledByAgent, ['supporting'], 'and marked, so it can be checked');
+  assert.equal(v._test.gapCount(), 0);
+});
+
+test('a refusal is shown, not buried — that is the guard working', async () => {
+  const ae = fakeAE();
+  ae.fill = (body) => ({
+    shots: body.shots, filled: [], skipped: 0,
+    refused: [{ id: 'b', why: 'invented numbers the narration never says: value=99999' }],
+  });
+  const v = openPanel(ae, {});
+  await v.sync({ force: true });
+  await v._test.loadShotlist(GAPPY, 'x.json');
+  await v._test.fillGaps();
+  assert.match(v._test.state().error, /invented numbers/);
+  const b = v._test.state().shots.find((s) => s.id === 'b');
+  assert.equal(b.supporting, '', 'still the registry default — nothing was written');
+  assert.equal(b.filledByAgent, undefined, 'and the shot is not marked as filled');
+});
+
+test('the model never overwrites what the brief already decided', async () => {
+  const ae = fakeAE();
+  ae.fill = (body) => {
+    const b = body.shots.find((s) => s.id === 'a');
+    assert.equal(b, undefined, 'shot a is complete, so it is not even sent');
+    return { shots: body.shots, filled: [], refused: [], skipped: 0 };
+  };
+  const v = openPanel(ae, {});
+  await v.sync({ force: true });
+  await v._test.loadShotlist(GAPPY, 'x.json');
+  // the panel sends every shot; the SERVER decides which need the model.
+  // What must never change is a value the brief already set.
+  await v._test.fillGaps();
+  assert.equal(v._test.state().shots.find((s) => s.id === 'a').value, 8484);
 });

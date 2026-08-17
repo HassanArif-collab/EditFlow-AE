@@ -254,6 +254,33 @@ function ef_vis_centerAnchor(layer, comp, xFrac, yFrac, atTime) {
    Start/End are themselves keyframed. Both leave the TIMING on keys, which
    is the part an editor wants to touch. */
 
+/* Named curves, so the feel is a choice rather than a constant buried in
+   code. Influence is how far a bezier handle reaches across the segment:
+   under about 30 the segment is mostly straight, over about 80 it stalls.
+
+     smooth  a true S — eased hard at both ends. The default.
+     settle  leaves with pace, arrives slowly. Good for a push that must
+             feel like it started before the cut.
+     soft    After Effects' own Easy Ease.
+     snap    barely moves, then arrives fast and stops dead.
+
+   `tail` is the handle on the outer edge of the whole move, where there is
+   no neighbouring key to blend with. */
+var EF_VIS_CURVES = {
+    smooth: { "in": 70, out: 70, tail: 70 },
+    settle: { "in": 85, out: 40, tail: 40 },
+    soft:   { "in": 33, out: 33, tail: 33 },
+    snap:   { "in": 92, out: 18, tail: 25 }
+};
+
+function ef_vis_curve(style) {
+    var st = String(style || "smooth");
+    // the old style names, kept so existing calls keep their meaning
+    if (st === "out") st = "settle";
+    if (st === "inout") st = "smooth";
+    return EF_VIS_CURVES[st] || EF_VIS_CURVES.smooth;
+}
+
 function ef_vis_easeArr(n, influence) {
     var out = [];
     for (var i = 0; i < n; i++) out.push(new KeyframeEase(0, influence));
@@ -274,7 +301,7 @@ function ef_vis_kf(prop, pairs, style) {
     var i;
     for (i = 0; i < pairs.length; i++) prop.setValueAtTime(pairs[i][0], pairs[i][1]);
 
-    var st = String(style || "out");
+    var st = String(style || "smooth");
     if (st === "linear") return prop;
 
     var dims = 1;
@@ -289,10 +316,13 @@ function ef_vis_kf(prop, pairs, style) {
             continue;
         }
         var first = (i === 1), last = (i === prop.numKeys);
-        // leaving a key crisp and arriving slow is what reads as "an editor
-        // touched the curves"; a symmetric ease reads as a default preset
-        var inInf = first ? 33 : (st === "inout" ? 68 : 80);
-        var outInf = last ? 33 : (st === "inout" ? 68 : 20);
+        var curve = ef_vis_curve(st);
+        // The handles at the ENDS of the whole move are what shape the S. An
+        // interior key gets both. Influence is the percentage of the segment
+        // the handle reaches across — too little and the curve is a ramp with
+        // a soft landing, which is what 20 was giving.
+        var inInf = first ? curve.tail : curve.in;
+        var outInf = last ? curve.tail : curve.out;
         try {
             prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.BEZIER,
                                               KeyframeInterpolationType.BEZIER);

@@ -1,6 +1,6 @@
 # Handoff — the AE visual pipeline
 
-**Branch:** `feat/visual-pipeline` · **Updated:** 2026-08-17
+**Branch:** `feat/visual-pipeline` · **Updated:** 2026-08-17 (verified live in AE 25.6)
 
 Read this first if you are picking this work up. It says what exists, what is
 left, and which decisions must not be quietly undone.
@@ -41,7 +41,8 @@ and an AI transcript-correction pass with a hallucination guard.
 | Brief parsing | `cep-panel-ae/client/src/shotlist-model.js` | full schema |
 | Panel tab | `cep-panel-ae/client/src/visuals-view.js` | tab 6 |
 | Contract docs | `docs/brief-schema.md`, `docs/recipes.md` | published |
-| Demo | `samples/demo-brief.json` | 6 shots, no files needed |
+| Demo | `samples/demo-brief.json` | 9 shots, all 8 recipes |
+| Demo assets | `samples/visuals/`, made by `scripts/make-demo-assets.py` | capture, stack stills, parallax layers |
 
 **The eight recipes:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`,
 `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`, `PROOF_STACK`.
@@ -63,9 +64,6 @@ An unsaved project cannot persist anything and the tab says so in a banner.
 
 Roughly in the order that gives the most value.
 
-1. **Live verification in AE.** Everything below the tests is unproven. The
-   keyframe refactor especially — `setTemporalEaseAtKey` dimensionality has a
-   fallback path that has never actually run. Use the agent bridge (below).
 2. **The agent (Step 4).** `POST /api/visuals/plan`, reusing
    `provider_service.chat(temperature=0)` exactly as
    `backend/services/subtitles/transcript_corrector.py` does. It is an
@@ -90,6 +88,29 @@ Roughly in the order that gives the most value.
    `scriptLine`; diff on load and flag changed rows as "rebuild?").
 8. **The last mile** — how the master reaches the edit (Dynamic Link vs render).
    Undecided, flagged so it is a decision rather than a surprise.
+
+### Verified live in AE 25.6 (2026-08-17)
+
+All nine demo shots build. Checked by dumping layer values and rendering
+frames, not by trusting the return codes:
+
+- eased keyframes land — the graph editor shows real S-curves
+- parallax depth is exact: bg 90.0 / mid 99.9 / fg 109.9 from an 80% fit at
+  zoom 1.25, i.e. the 0.5 / 1.0 / 1.5 rates
+- the doc scroll settles with the cited line dead centre, marker swiped
+- the proof-stack rhythm cuts at 1.57 / 1.13 / 0.81 / 0.59 then holds 0.90
+- LINE_GRAPH's Shape vertices and Trim Paths draw correctly
+
+Three bugs only the live pass could find, all fixed:
+
+1. **DOC_HIGHLIGHT scrolled the page off frame.** A layer is positioned by its
+   ANCHOR, which defaults to the centre of the source, not the top-left. The
+   scroll maths assumed top-left. Renders showed half an empty frame.
+2. **PROOF_STACK pushed before each image was visible.** Every image's move ran
+   from t=0 instead of from its own cut, so each appeared already at full zoom
+   and sat static. Now started at the layer's inPoint.
+3. **ASSET_REVEAL never reported its technique**, so the panel said
+   "not applied" for a parallax that was plainly working.
 
 ---
 

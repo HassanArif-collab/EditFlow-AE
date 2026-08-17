@@ -764,10 +764,11 @@ function ef_vis_buildAssetReveal(comp, spec, cfg, missing) {
         L.name = String(names[i]);
         ef_vis_fitLayer(L, comp, spec.fit || "fill");
         var rate = parallax ? rates[Math.min(i, rates.length - 1)] : 1;
-        ef_vis_applyTechnique(L, comp, spec, {
+        var got = ef_vis_applyTechnique(L, comp, spec, {
             scalable: true, zoom: spec.zoom || 1.15, hold: spec.hold || 0,
             dur: comp.duration - (spec.hold || 0), rate: rate,
         });
+        if (got) spec._techniqueApplied = got;
         L.moveToEnd();
         placed++;
     }
@@ -864,7 +865,7 @@ function ef_vis_buildProofStack(comp, spec, cfg, missing) {
         L.inPoint = t;
         L.outPoint = Math.min(comp.duration, t + slots[i]);
         applied = ef_vis_applyTechnique(L, comp, spec, {
-            scalable: true, zoom: spec.zoom || 1.06, dur: slots[i],
+            scalable: true, zoom: spec.zoom || 1.06, dur: slots[i], start: t,
         }) || applied;
         t += slots[i];
     }
@@ -919,9 +920,13 @@ function ef_vis_buildDocHighlight(comp, spec, cfg, missing) {
     var scale = comp.width / (a.pageWidth || realW || comp.width);
     L.property("Scale").setValue([scale * 100, scale * 100]);
 
+    // A layer is positioned by its ANCHOR, which defaults to the centre of the
+    // source — not its top-left. Treating it as top-left scrolled the page
+    // clean off the bottom of the frame, which only a rendered frame showed.
+    var half = (realH * scale) / 2;
     var rectMidPage = (a.rect.y || 0) + (a.rect.h || 0) / 2;
-    var restY = comp.height / 2 - rectMidPage * scale;      // cited line centred
-    var startY = comp.height / 2 - (realH * scale) / 2;     // page centred
+    var startY = half;                                        // page top at frame top
+    var restY = comp.height / 2 + half - rectMidPage * scale;  // cited line centred
     if (String(spec.technique || "").toUpperCase() === "DOC_SCROLL" ||
         !spec.technique || String(spec.technique).toUpperCase() === "NONE") {
         var travel = Math.max(0.5, comp.duration - (spec.holdAfter || 1.5));

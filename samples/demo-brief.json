@@ -1,5 +1,5 @@
 {
-  "_comment": "Load this in the Visuals tab to see every recipe that needs no files on disk. Built at 1920x1080 @ 30fps regardless of which comp you have open.",
+  "_comment": "Every recipe After Effects can build. Set the Visuals Folder to samples/visuals first — the last three shots place real files. Built at 1920x1080 @ 30fps whatever comp is open.",
   "shots": [
     {
       "id": "demo_01",
@@ -149,6 +149,85 @@
         "accentColor": "#b8860b"
       },
       "needs": []
+    },
+    {
+      "id": "demo_07",
+      "archetype": "DOC_HIGHLIGHT",
+      "recipe": "DOC_HIGHLIGHT",
+      "technique": "DOC_SCROLL",
+      "durationInFrames": 240,
+      "scriptLine": "The paper put the take-home figure at eight thousand four hundred and eighty-four.",
+      "props": {
+        "holdAfter": 1.8,
+        "accentColor": "#e8c547"
+      },
+      "assetDir": "assets/demo",
+      "sourceAnchor": {
+        "url": "https://example.invalid/the-daily-ledger",
+        "image": "assets/_captures/demo-page/fullpage.png",
+        "pageWidth": 1280,
+        "pageHeight": 3200,
+        "imageWidth": 1280,
+        "imageHeight": 3200,
+        "rect": {
+          "x": 96,
+          "y": 1580,
+          "w": 940,
+          "h": 84
+        }
+      },
+      "note": "scrolls to the cited line, then the marker swipes across it",
+      "qaFocus": "highlight landing on the wrong paragraph, scroll too fast to read",
+      "needs": []
+    },
+    {
+      "id": "demo_08",
+      "archetype": "PROOF_STACK",
+      "recipe": "PROOF_STACK",
+      "technique": "PUSH_IN",
+      "durationInFrames": 150,
+      "scriptLine": "The document, the number, the quote — one after another.",
+      "props": {
+        "rhythm": "auto",
+        "holdLast": 0.9,
+        "zoom": 1.06
+      },
+      "assetDir": "assets/demo",
+      "assets": [
+        "evidence-1.png",
+        "evidence-2.png",
+        "evidence-3.png",
+        "evidence-4.png",
+        "evidence-5.png"
+      ],
+      "note": "cuts tighten into the last image — this is the reveal beat",
+      "qaFocus": "cuts too slow to feel like a stack, last image not held",
+      "needs": []
+    },
+    {
+      "id": "demo_09",
+      "archetype": "BROLL_VIDEO",
+      "recipe": "ASSET_REVEAL",
+      "technique": "PARALLAX_2_5D",
+      "durationInFrames": 180,
+      "scriptLine": "And outside, the city goes on exactly as before.",
+      "props": {
+        "fit": "fill",
+        "zoom": 1.25,
+        "hold": 0
+      },
+      "productionRoute": "generated",
+      "routeReason": "a scene with depth — generated, then given a camera move here",
+      "assetDir": "assets/demo",
+      "assets": [
+        "layer-bg.png",
+        "layer-mid.png",
+        "layer-fg.png"
+      ],
+      "note": "back to front: bg moves least, fg most",
+      "qaFocus": "visible cut edges between layers, push too fast",
+      "needs": []
     }
-  ]
+  ],
+  "_visualsRoot": "samples/visuals  (set this in the panel's Visuals Folder field)"
 }

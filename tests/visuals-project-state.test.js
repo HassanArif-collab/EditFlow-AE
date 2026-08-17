@@ -373,8 +373,12 @@ function withCapture(imageDims, fn) {
   // beats guessing the exact depth each builder walks.
   const anyProp = () => {
     const node = {
-      setValue() {}, moveToEnd() {}, name: '',
+      setValue() {}, moveToEnd() {}, name: '', numKeys: 0, value: [100, 100],
+      // the builders write real keyframes now, not expressions
+      setValueAtTime() { node.numKeys++; },
+      setInterpolationTypeAtKey() {}, setTemporalEaseAtKey() {},
       property: () => anyProp(), addProperty: () => anyProp(),
+      valueAtTime: () => node.value,
       sourceRectAtTime: () => ({ left: 0, top: 0, width: 100, height: 20 }),
     };
     Object.defineProperty(node, 'expression', { get: () => '', set: () => {} });

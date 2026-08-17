@@ -240,34 +240,136 @@ function ef_vis_centerAnchor(layer, comp, xFrac, yFrac, atTime) {
     layer.property("Position").setValue([comp.width * xFrac, comp.height * yFrac]);
 }
 
+/* ── keyframes ───────────────────────────────────────────────
+   Real keyframes, not expressions.
+
+   An expression is invisible in the timeline and cannot be curve-edited —
+   you cannot grab a handle in the graph editor and make the move feel
+   different. Everything below writes actual keys with eased tangents, so
+   every shot lands in your timeline as something you can take over by hand.
+
+   Two things genuinely cannot be keys, and both are documented where they
+   appear: a counting number needs one formatting expression driven by a
+   keyframed slider, and per-letter timing uses a Range Selector whose
+   Start/End are themselves keyframed. Both leave the TIMING on keys, which
+   is the part an editor wants to touch. */
+
+function ef_vis_easeArr(n, influence) {
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(new KeyframeEase(0, influence));
+    return out;
+}
+
+/**
+ * Set keyframes and shape their curves.
+ *
+ * pairs: [[time, value], ...]
+ * style: "out"    decelerate into the last key — the documentary default
+ *        "inout"  ease both ends, for a move that starts and stops
+ *        "hold"   step, no interpolation (a hard cut)
+ *        "linear" untouched
+ */
+function ef_vis_kf(prop, pairs, style) {
+    if (!prop || !pairs || !pairs.length) return prop;
+    var i;
+    for (i = 0; i < pairs.length; i++) prop.setValueAtTime(pairs[i][0], pairs[i][1]);
+
+    var st = String(style || "out");
+    if (st === "linear") return prop;
+
+    var dims = 1;
+    try { dims = (pairs[0][1] instanceof Array) ? pairs[0][1].length : 1; } catch (eD) {}
+
+    for (i = 1; i <= prop.numKeys; i++) {
+        if (st === "hold") {
+            try {
+                prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.HOLD,
+                                                  KeyframeInterpolationType.HOLD);
+            } catch (eH) {}
+            continue;
+        }
+        var first = (i === 1), last = (i === prop.numKeys);
+        // leaving a key crisp and arriving slow is what reads as "an editor
+        // touched the curves"; a symmetric ease reads as a default preset
+        var inInf = first ? 33 : (st === "inout" ? 68 : 80);
+        var outInf = last ? 33 : (st === "inout" ? 68 : 20);
+        try {
+            prop.setInterpolationTypeAtKey(i, KeyframeInterpolationType.BEZIER,
+                                              KeyframeInterpolationType.BEZIER);
+            prop.setTemporalEaseAtKey(i, ef_vis_easeArr(dims, inInf), ef_vis_easeArr(dims, outInf));
+        } catch (e1) {
+            // some properties report a different dimensionality than their
+            // value; one ease applied to all dimensions is the safe retry
+            try {
+                prop.setTemporalEaseAtKey(i, ef_vis_easeArr(1, inInf), ef_vis_easeArr(1, outInf));
+            } catch (e2) {}
+        }
+    }
+    return prop;
+}
+
+/** Fade a layer in, and optionally back out, with real keys. */
+function ef_vis_kfFade(layer, at, dur, to, outAt, outDur) {
+    var op = layer.property("Opacity");
+    var pairs = [[at, 0], [at + (dur || 0.4), (to == null ? 100 : to)]];
+    if (outAt != null) {
+        pairs.push([outAt, (to == null ? 100 : to)]);
+        pairs.push([outAt + (outDur || 0.35), 0]);
+    }
+    return ef_vis_kf(op, pairs, "out");
+}
+
 /* ── expression fragments ── */
 
-/* Count-up. Uses AE's own easing so the curve matches what an editor
-   would draw, and hand-rolls the separators because ES3 lacks
-   toLocaleString. */
-function ef_vis_countExpr(value, dur, prefix, suffix) {
-    var v = Math.round(Number(value));
-    return "var target=" + v + ";var dur=" + (dur || 3) + ";" +
-        "var t=time-inPoint;" +
-        "var p=(t<=0)?0:((t>=dur)?1:easeOut(t,0,dur,0,1));" +
-        "var n=Math.round(target*p);" +
+/* A counter on REAL keyframes.
+ *
+ * A number cannot be keyframed as text without one key per displayed value —
+ * ninety keys for a three-second count, unreadable in the timeline. So the
+ * standard rig: a Slider Control carries the count and is keyframed and
+ * curve-editable like anything else, and one short expression formats the
+ * slider into text. The TIMING, which is what you would want to adjust, is
+ * entirely on keys. Drag them, ease them, move them — the number follows.
+ */
+/* The one expression left in this file. It reads the keyframed slider and
+   turns it into text with thousands separators — ES3 has no toLocaleString,
+   and AE has no way to show a number without one. It carries no timing:
+   every bit of that is on the slider's keys. */
+function ef_vis_countFormatExpr(prefix, suffix) {
+    return "var n=Math.round(effect(\"Count\")(\"Slider\"));" +
         "var s=String(Math.abs(n));var out='';" +
         "for(var i=0;i<s.length;i++){if(i>0&&(s.length-i)%3===0){out+=',';}out+=s.charAt(i);}" +
         "(n<0?'-':'')+" + ef_vis_json(String(prefix || "")) + "+out+" +
         ef_vis_json(String(suffix || "")) + ";";
 }
 
-/* Letter-by-letter reveal via a text animator + expression selector.
-   Same mechanism the caption engine proved in AE. */
-function ef_vis_letterProgressExpr(stagger, dur) {
-    return "var stag=" + (stagger || 0.05) + ";var d=" + (dur || 0.45) + ";" +
-        "var t0=thisLayer.inPoint+(textIndex-1)*stag;" +
-        "var p=(time-t0)/d;if(p<0)p=0;if(p>1)p=1;" +
-        "var e=1-Math.pow(1-p,3);" +
-        "var a=(1-e)*100;[a,a,a];";
+function ef_vis_buildCounterRig(layer, comp, value, dur, prefix, suffix, startAt) {
+    var fx = layer.property("ADBE Effect Parade");
+    var slider = fx.addProperty("ADBE Slider Control");
+    slider.name = "Count";
+    var at = startAt || 0;
+    ef_vis_kf(slider.property("ADBE Slider Control-0001"),
+              [[at, 0], [at + Math.max(0.1, dur || 3), Math.round(Number(value) || 0)]], "out");
+
+    layer.property("Source Text").expression = ef_vis_countFormatExpr(prefix, suffix);
+    return slider;
 }
 
-function ef_vis_addLetterAnimator(layer, name, matchName, value, expr) {
+
+
+/**
+ * Per-letter animation on a RANGE SELECTOR whose Start/End are keyframed —
+ * the rig an editor would build by hand, and the reason letters can be
+ * retimed by dragging two keys instead of editing code.
+ *
+ * The animator holds the "off" state (opacity 0, offset position, blur).
+ * The selector says which letters are currently in that state, and moving
+ * its edge across the line is what makes them arrive or leave.
+ *
+ *   reveal, ltr   Start 0 -> 100   selection shrinks from the left, letters appear
+ *   dissolve, ltr End   0 -> 100   selection grows from the left, letters leave
+ *   dissolve, rtl Start 100 -> 0   selection grows from the right
+ */
+function ef_vis_addLetterAnimator(layer, name, matchName, value, timing) {
     var animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
     var anim = animators.addProperty("ADBE Text Animator");
     anim.name = name;
@@ -276,9 +378,21 @@ function ef_vis_addLetterAnimator(layer, name, matchName, value, expr) {
         try { prop.setValue(value); }
         catch (e1) { try { prop.setValue([value[0], value[1], 0]); } catch (e2) {} }
     }
-    var sel = anim.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
+
+    var sel = anim.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
     try { sel.property("ADBE Text Range Type2").setValue(1); } catch (e3) {}   // 1 = Characters
-    sel.property("ADBE Text Expressible Amount").expression = expr;
+    // a little softness at the edge so letters overlap instead of popping
+    try { sel.property("ADBE Text Range Smoothness").setValue(timing.smooth == null ? 60 : timing.smooth); } catch (e4) {}
+
+    var t0 = timing.at || 0, t1 = t0 + Math.max(0.1, timing.dur || 0.8);
+    if (timing.edge === "end") {
+        ef_vis_kf(sel.property("ADBE Text Percent End"), [[t0, 0], [t1, 100]], timing.style || "out");
+    } else if (timing.from != null) {
+        ef_vis_kf(sel.property("ADBE Text Percent Start"),
+                  [[t0, timing.from], [t1, timing.to]], timing.style || "out");
+    } else {
+        ef_vis_kf(sel.property("ADBE Text Percent Start"), [[t0, 0], [t1, 100]], timing.style || "out");
+    }
     return anim;
 }
 
@@ -289,53 +403,28 @@ function ef_vis_addLetterAnimator(layer, name, matchName, value, expr) {
    100 silently throws that away (learned the hard way from the counter's
    pulse, which un-did its own auto-fit). */
 
-/* Eased 0..1 across the move, after an optional still hold. */
-function ef_vis_progressExpr(hold, dur) {
-    return "var h=" + (hold || 0) + ";var d=" + Math.max(0.1, dur) + ";" +
-           "var t=time-inPoint-h;" +
-           "var p=(t<=0)?0:((t>=d)?1:easeOut(t,0,d,0,1));";
-}
 
-/* A slow scale toward the subject. rate scales the zoom for parallax depth. */
-function ef_vis_pushExpr(zoom, hold, dur, rate) {
-    var z = 1 + ((zoom || 1.15) - 1) * (rate == null ? 1 : rate);
-    return ef_vis_progressExpr(hold, dur) +
-           "var b=value;var s=1+(" + z + "-1)*p;[b[0]*s,b[1]*s];";
-}
 
-/* Ken Burns: the push, plus a slow drift so the frame is never static. */
-function ef_vis_driftExpr(comp, hold, dur, dx, dy) {
-    return ef_vis_progressExpr(hold, dur) +
-           "var b=value;[b[0]+" + dx + "*p,b[1]+" + dy + "*p];";
-}
 
-/* DUST_DISSOLVE — v7: per-letter fade + blur + upward drift, sequenced.
-   It means loss. Direction follows deletion (rtl) or reading (ltr). */
-function ef_vis_dustExpr(startAt, stagger, dur, count, rtl) {
-    var idx = rtl ? "(" + count + "-textIndex)" : "(textIndex-1)";
-    return "var st=" + startAt + ";var stag=" + stagger + ";var d=" + dur + ";" +
-           "var t0=st+" + idx + "*stag;var p=(time-inPoint-t0)/d;" +
-           "if(p<0)p=0;if(p>1)p=1;p=p*p;";
-}
 
 function ef_vis_applyDustDissolve(layer, comp, spec, startAt) {
     // 60% overlap between letters, 1.2–2.0s total, per the technique deck
     var text = String(spec.title || spec.value || "");
     var count = Math.max(1, text.length);
-    var total = 1.6;
-    var stagger = (total * 0.4) / count;
-    var dur = Math.max(0.35, total * 0.6);
+    var total = 1.6;                       // v7 band: 1.2-2.0s for the whole line
     var rtl = String(spec.dustDirection || "rtl") === "rtl";
-    var p = ef_vis_dustExpr(startAt, stagger, dur, count, rtl);
+    // rtl: the selection grows from the RIGHT, so the end of the number goes
+    // first — deletion order. ltr: it grows from the left, reading order.
+    var timing = rtl
+        ? { at: startAt, dur: total, from: 100, to: 0, smooth: 45 }
+        : { at: startAt, dur: total, edge: "end", smooth: 45 };
 
-    ef_vis_addLetterAnimator(layer, "EF Dust Fade", "ADBE Text Opacity", 0,
-        p + "(1-p)*100;");
+    ef_vis_addLetterAnimator(layer, "EF Dust Fade", "ADBE Text Opacity", 0, timing);
     ef_vis_addLetterAnimator(layer, "EF Dust Drift", "ADBE Text Position 3D",
-        [0, -Math.round(comp.height * 0.045)], p + "[0,p*100,0];");
+        [0, -Math.round(comp.height * 0.045)], timing);
     // Blur is what sells "crumbling" rather than "sliding away"
     try {
-        ef_vis_addLetterAnimator(layer, "EF Dust Blur", "ADBE Text Blur",
-            [40, 40], p + "[p*100,p*100];");
+        ef_vis_addLetterAnimator(layer, "EF Dust Blur", "ADBE Text Blur", [40, 40], timing);
     } catch (eB) {}
     // ponytail: no per-letter particle scatter — the deck asks for 12-16
     // particles per letter, which is a real particle system in ExtendScript.
@@ -353,17 +442,28 @@ function ef_vis_applyTechnique(layer, comp, spec, opts) {
     var o = opts || {};
     var dur = (o.dur != null) ? o.dur : comp.duration;
     var hold = (o.hold != null) ? o.hold : 0;
+    var start = (o.start != null) ? o.start : 0;
     if (t === "NONE" || !t) return "";
 
     if (t === "PUSH_IN" || t === "KEN_BURNS" || t === "PARALLAX_2_5D") {
         if (!o.scalable) return "";
-        layer.property("Scale").expression =
-            ef_vis_pushExpr(o.zoom, hold, dur, o.rate);
+        var sp = layer.property("Scale");
+        var base = sp.value;                        // whatever fitLayer set
+        var rate = (o.rate == null) ? 1 : o.rate;
+        var z = 1 + ((o.zoom || 1.15) - 1) * rate;
+        var end = [];
+        for (var d = 0; d < base.length; d++) end.push(base[d] * z);
+        ef_vis_kf(sp, [[start + hold, base], [start + hold + Math.max(0.1, dur), end]], "out");
+
         if (t === "KEN_BURNS") {
             // a drift of a few percent of frame reads as filmed, not sliding
+            var pp = layer.property("Position");
+            var p0 = pp.value;
             var dx = Math.round(comp.width * 0.03) * (o.panX == null ? 1 : o.panX);
             var dy = Math.round(comp.height * 0.02) * (o.panY == null ? -1 : o.panY);
-            layer.property("Position").expression = ef_vis_driftExpr(comp, hold, dur, dx, dy);
+            var p1 = [p0[0] + dx, p0[1] + dy];
+            if (p0.length > 2) p1.push(p0[2]);
+            ef_vis_kf(pp, [[start + hold, p0], [start + hold + Math.max(0.1, dur), p1]], "out");
         }
         return t;
     }
@@ -415,8 +515,7 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
     var num = comp.layers.addText("0");
     num.name = "Value";
     ef_vis_styleText(num, cfg, spec, numSize, [1, 1, 1]);
-    num.property("Source Text").expression =
-        ef_vis_countExpr(spec.value, spec.countDur, spec.prefix, "");
+    ef_vis_buildCounterRig(num, comp, spec.value, spec.countDur, spec.prefix, "", 0);
     // Measure the FINAL number, not the "0" it starts on. Sampling at 0.1s
     // sized the layer to one digit, so "Rs 8,484" then ran off the frame.
     var landed = Math.min(comp.duration - 0.01, (spec.countDur || 3) + 0.1);
@@ -430,8 +529,7 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
         ef_vis_centerAnchor(title, comp, 0.5, 0.36, 0.1);
         ef_vis_fitText(title, comp, cfg, 0.1);
         // label arrives WITH the number, never after a long delay
-        title.property("Opacity").expression =
-            "var t=time-inPoint;t<0?0:(t>=0.4?100:easeOut(t,0,0.4,0,100))";
+        ef_vis_kfFade(title, 0, 0.4, 100);
     }
 
     if (spec.unit) {
@@ -439,8 +537,7 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
         unit.name = "Unit";
         ef_vis_styleText(unit, cfg, spec, Math.round(comp.height * 0.032), [0.75, 0.78, 0.82]);
         ef_vis_centerAnchor(unit, comp, 0.5, 0.62, 0.1);
-        unit.property("Opacity").expression =
-            "var t=time-inPoint-" + (spec.countDur || 3) + ";t<0?0:(t>=0.5?70:easeOut(t,0,0.5,0,70))";
+        ef_vis_kfFade(unit, (spec.countDur || 3), 0.5, 70);
     }
 
     spec._techniqueApplied = ef_vis_applyTechnique(num, comp, spec, {
@@ -452,9 +549,10 @@ function ef_vis_buildStatCounter(comp, spec, cfg, missing) {
         // Multiplies `value` (the scale ef_vis_fitText just set) instead of
         // assuming 100: hardcoding it threw away the fit, so a long number
         // that had been shrunk to fit sprang back over the frame edge.
-        num.property("Scale").expression =
-            "var b=value;var t=time-inPoint-" + (spec.countDur || 3) + ";" +
-            "if(t<0||t>0.6){b}else{var s=1+0.06*Math.sin(t/0.6*Math.PI);[b[0]*s,b[1]*s]}";
+        var sc = num.property("Scale"), b = sc.value, pk = [];
+        for (var q = 0; q < b.length; q++) pk.push(b[q] * 1.06);
+        var pt = spec.countDur || 3;
+        ef_vis_kf(sc, [[pt, b], [pt + 0.3, pk], [pt + 0.6, b]], "inout");
     }
     return 1;
 }
@@ -482,8 +580,7 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
     var afill = ag.addProperty("ADBE Vector Graphic - Fill");
     afill.property("ADBE Vector Fill Color").setValue([0.45, 0.48, 0.55]);
     axis.property("Position").setValue([comp.width / 2, baseY]);
-    axis.property("Scale").expression =
-        "var t=time-inPoint;var p=(t<=0)?0:((t>=0.4)?1:easeOut(t,0,0.4,0,1));[p*100,100]";
+    ef_vis_kf(axis.property("Scale"), [[0, [0, 100]], [0.4, [100, 100]]], "out");
 
     for (var i = 0; i < n; i++) {
         var b = spec.bars[i];
@@ -504,11 +601,12 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
             b.accent ? spec.accent : [0.30, 0.34, 0.42]);
         bar.property("Position").setValue([cx, baseY]);
         // rise with a restrained overshoot, then settle
-        bar.property("Scale").expression =
-            "var d=" + (spec.growDur || 0.9) + ";var t=time-inPoint-" + delay + ";" +
-            "if(t<=0){[100,0]}else if(t>=d){[100,100]}else{" +
-            "var p=t/d;var e=1-Math.pow(2,-10*p);var o=1+0.06*Math.sin(p*Math.PI);" +
-            "[100,e*100*o]}";
+        // rise, overshoot a little, settle — three keys is what an editor
+        // would draw, and each one can be dragged
+        var gd = spec.growDur || 0.9;
+        ef_vis_kf(bar.property("Scale"),
+                  [[delay, [100, 0]], [delay + gd * 0.78, [100, 106]], [delay + gd, [100, 100]]],
+                  "out");
 
         if (b.label) {
             var lab = comp.layers.addText(String(b.label));
@@ -517,20 +615,17 @@ function ef_vis_buildBarChart(comp, spec, cfg, missing) {
                              b.accent ? spec.accent : [0.8, 0.83, 0.88]);
             ef_vis_centerAnchor(lab, comp, cx / comp.width, (baseY + comp.height * 0.05) / comp.height, 0.1);
             // labels arrive AFTER the data is readable
-            lab.property("Opacity").expression =
-                "var t=time-inPoint-" + (delay + (spec.growDur || 0.9)) + ";" +
-                "t<0?0:(t>=0.35?100:easeOut(t,0,0.35,0,100))";
+            ef_vis_kfFade(lab, delay + (spec.growDur || 0.9), 0.35, 100);
         }
 
         var val = comp.layers.addText("0");
         val.name = "Value " + (i + 1);
         ef_vis_styleText(val, cfg, spec, Math.round(comp.height * 0.030),
                          b.accent ? [1, 1, 1] : [0.72, 0.75, 0.8]);
-        val.property("Source Text").expression = ef_vis_countExpr(b.value, spec.growDur || 0.9, "", "");
+        ef_vis_buildCounterRig(val, comp, b.value, spec.growDur || 0.9, "", "", delay);
         var valY = (baseY - h - comp.height * 0.035) / comp.height;
         ef_vis_centerAnchor(val, comp, cx / comp.width, valY, 0.1);
-        val.property("Opacity").expression =
-            "var t=time-inPoint-" + delay + ";t<0?0:100";
+        ef_vis_kf(val.property("Opacity"), [[delay, 0], [delay + 0.01, 100]], "hold");
     }
 
     if (spec.caption) {
@@ -555,22 +650,25 @@ function ef_vis_buildTitleCard(comp, spec, cfg, missing) {
     ef_vis_centerAnchor(title, comp, 0.5, 0.47, 0.1);
     ef_vis_fitText(title, comp, cfg, 0.1);
 
-    var expr = ef_vis_letterProgressExpr(spec.stagger, 0.45);
-    ef_vis_addLetterAnimator(title, "EF Letter Fade", "ADBE Text Opacity", 0, expr);
+    // the whole line arrives over stagger x letters, which is what the v7
+    // band is really describing once it is expressed as one move
+    var revealDur = Math.max(0.5, (spec.stagger || 0.05) * String(spec.title).length + 0.45);
+    var timing = { at: 0, dur: revealDur, smooth: 60 };
+    ef_vis_addLetterAnimator(title, "EF Letter Fade", "ADBE Text Opacity", 0, timing);
 
     var v = spec.variant;
     if (v === "slide_up") {
         ef_vis_addLetterAnimator(title, "EF Letter Rise", "ADBE Text Position 3D",
-                                 [0, Math.round(comp.height * 0.05)], expr);
+                                 [0, Math.round(comp.height * 0.05)], timing);
     } else if (v === "slide_left") {
         ef_vis_addLetterAnimator(title, "EF Letter Slide", "ADBE Text Position 3D",
-                                 [-Math.round(comp.width * 0.06), 0], expr);
+                                 [-Math.round(comp.width * 0.06), 0], timing);
     } else if (v === "scale_center") {
         ef_vis_addLetterAnimator(title, "EF Letter Scale", "ADBE Text Scale 3D",
-                                 [-60, -60], expr);
+                                 [-60, -60], timing);
     } else if (v === "fade_rotate") {
         var anim = ef_vis_addLetterAnimator(title, "EF Letter Rotate", "ADBE Text Rotation",
-                                            null, expr);
+                                            null, timing);
         try {
             anim.property("ADBE Text Animator Properties")
                 .property("ADBE Text Rotation").setValue(12);
@@ -588,8 +686,7 @@ function ef_vis_buildTitleCard(comp, spec, cfg, missing) {
         ef_vis_centerAnchor(sub, comp, 0.5, 0.60, 0.1);
         ef_vis_fitText(sub, comp, cfg, 0.1);
         var after = (spec.stagger || 0.05) * String(spec.title).length + 0.25;
-        sub.property("Opacity").expression =
-            "var t=time-inPoint-" + after + ";t<0?0:(t>=0.5?100:easeOut(t,0,0.5,0,100))";
+        ef_vis_kfFade(sub, after, 0.5, 100);
     }
     return 1;
 }
@@ -828,11 +925,10 @@ function ef_vis_buildDocHighlight(comp, spec, cfg, missing) {
     if (String(spec.technique || "").toUpperCase() === "DOC_SCROLL" ||
         !spec.technique || String(spec.technique).toUpperCase() === "NONE") {
         var travel = Math.max(0.5, comp.duration - (spec.holdAfter || 1.5));
-        L.property("Position").setValue([comp.width / 2, 0]);
-        L.property("Position").expression =
-            "var d=" + travel + ";var t=time-inPoint;" +
-            "var p=(t<=0)?0:((t>=d)?1:easeOut(t,0,d,0,1));" +
-            "[" + (comp.width / 2) + "," + startY + "+(" + (restY - startY) + ")*p];";
+        // two keys: page centred, then the cited line centred. Drag the
+        // second one to change where the scroll settles.
+        ef_vis_kf(L.property("Position"),
+                  [[0, [comp.width / 2, startY]], [travel, [comp.width / 2, restY]]], "out");
     } else {
         L.property("Position").setValue([comp.width / 2, restY]);
         ef_vis_applyTechnique(L, comp, spec, { scalable: true, zoom: spec.zoom || 1.1 });
@@ -855,9 +951,8 @@ function ef_vis_buildDocHighlight(comp, spec, cfg, missing) {
     var arrive = Math.max(0.3, comp.duration - (spec.holdAfter || 1.5));
     hl.property("Position").setValue([hlX, comp.height / 2]);
     // swipe on from the left, the way a marker is drawn
-    hl.property("Scale").expression =
-        "var t=time-inPoint-" + arrive + ";" +
-        "if(t<=0){[0,100]}else{var p=(t>=0.45)?1:easeOut(t,0,0.45,0,1);[p*100,100]}";
+    ef_vis_kf(hl.property("Scale"),
+              [[arrive, [0, 100]], [arrive + 0.45, [100, 100]]], "out");
     hl.property("Anchor Point").setValue([-hw / 2, 0]);
     hl.property("Position").setValue([hlX - hw / 2, comp.height / 2]);
     return 2;
@@ -897,8 +992,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
     ag.addProperty("ADBE Vector Graphic - Fill")
       .property("ADBE Vector Fill Color").setValue([0.45, 0.48, 0.55]);
     axis.property("Position").setValue([comp.width / 2, baseY]);
-    axis.property("Scale").expression =
-        "var t=time-inPoint;var p=(t<=0)?0:((t>=0.4)?1:easeOut(t,0,0.4,0,1));[p*100,100]";
+    ef_vis_kf(axis.property("Scale"), [[0, [0, 100]], [0.4, [100, 100]]], "out");
 
     // the line itself, as a path drawn on with Trim Paths
     var verts = [];
@@ -923,9 +1017,8 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
 
     var trim = line.property("ADBE Root Vectors Group").addProperty("ADBE Vector Filter - Trim");
     var drawDur = Math.max(0.6, Math.min(2.4, comp.duration * 0.45));
-    trim.property("ADBE Vector Trim End").expression =
-        "var t=time-inPoint-0.35;var d=" + drawDur + ";" +
-        "t<=0?0:(t>=d?100:easeOut(t,0,d,0,100))";
+    ef_vis_kf(trim.property("ADBE Vector Trim End"),
+              [[0.35, 0], [0.35 + drawDur, 100]], "out");
 
     // the point the narration names
     var hi = Number(spec.highlightIndex);
@@ -941,9 +1034,8 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
       .property("ADBE Vector Fill Color").setValue(spec.accent || [0.72, 0.53, 0.04]);
     dot.property("Position").setValue([verts[hi][0] + comp.width / 2, verts[hi][1] + comp.height / 2]);
     var dotAt = 0.35 + drawDur * (hi / (n - 1));
-    dot.property("Scale").expression =
-        "var t=time-inPoint-" + dotAt + ";" +
-        "if(t<=0){[0,0]}else{var p=(t>=0.35)?1:easeOut(t,0,0.35,0,1);[p*100,p*100]}";
+    ef_vis_kf(dot.property("Scale"),
+              [[dotAt, [0, 0]], [dotAt + 0.26, [112, 112]], [dotAt + 0.42, [100, 100]]], "out");
 
     var val = comp.layers.addText(ef_vis_groupDigits(Number(pts[hi].value) || 0));
     val.name = "Callout value";
@@ -951,8 +1043,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
     ef_vis_centerAnchor(val, comp,
         (verts[hi][0] + comp.width / 2) / comp.width,
         (verts[hi][1] + comp.height / 2 - comp.height * 0.055) / comp.height, 0.1);
-    val.property("Opacity").expression =
-        "var t=time-inPoint-" + (dotAt + 0.2) + ";t<0?0:(t>=0.35?100:easeOut(t,0,0.35,0,100))";
+    ef_vis_kfFade(val, dotAt + 0.2, 0.35, 100);
 
     // labels last, once the shape of the data is already readable
     for (i = 0; i < n; i++) {
@@ -963,9 +1054,7 @@ function ef_vis_buildLineGraph(comp, spec, cfg, missing) {
         ef_vis_centerAnchor(lab, comp,
             (verts[i][0] + comp.width / 2) / comp.width,
             (baseY + comp.height * 0.05) / comp.height, 0.1);
-        lab.property("Opacity").expression =
-            "var t=time-inPoint-" + (0.35 + drawDur + 0.1) + ";" +
-            "t<0?0:(t>=0.35?100:easeOut(t,0,0.35,0,100))";
+        ef_vis_kfFade(lab, 0.35 + drawDur + 0.1, 0.35, 100);
     }
 
     if (spec.caption) {
@@ -999,8 +1088,7 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
             ef_vis_styleText(t, cfg, spec, Math.round(comp.height * 0.040), accent);
             ef_vis_centerAnchor(t, comp, cx, 0.38, 0.1);
             ef_vis_fitText(t, comp, cfg, 0.1);
-            t.property("Opacity").expression =
-                "var t=time-inPoint-" + at + ";t<0?0:(t>=0.4?100:easeOut(t,0,0.4,0,100))";
+            ef_vis_kfFade(t, at, 0.4, 100);
         }
 
         var num = comp.layers.addText("0");
@@ -1008,22 +1096,19 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
         ef_vis_styleText(num, cfg, spec, Math.round(comp.height * 0.11),
                          (i === 1) ? [1, 1, 1] : [0.82, 0.85, 0.9]);
         var cd = Math.max(1.2, Math.min(2.4, comp.duration * 0.35));
-        num.property("Source Text").expression =
-            ef_vis_countExpr(Number(s.value) || 0, cd, String(s.prefix || ""), "")
-              .replace("var t=time-inPoint;", "var t=time-inPoint-" + at + ";");
+        ef_vis_buildCounterRig(num, comp, Number(s.value) || 0, cd,
+                               String(s.prefix || ""), "", at);
         var landed = Math.min(comp.duration - 0.01, at + cd + 0.1);
         ef_vis_centerAnchor(num, comp, cx, 0.52, landed);
         ef_vis_fitText(num, comp, cfg, landed);
-        num.property("Opacity").expression =
-            "var t=time-inPoint-" + at + ";t<0?0:100";
+        ef_vis_kf(num.property("Opacity"), [[at, 0], [at + 0.01, 100]], "hold");
 
         if (s.unit) {
             var u = comp.layers.addText(String(s.unit));
             u.name = (i ? "Right" : "Left") + " unit";
             ef_vis_styleText(u, cfg, spec, Math.round(comp.height * 0.028), [0.72, 0.75, 0.8]);
             ef_vis_centerAnchor(u, comp, cx, 0.63, 0.1);
-            u.property("Opacity").expression =
-                "var t=time-inPoint-" + (at + cd * 0.8) + ";t<0?0:(t>=0.4?70:easeOut(t,0,0.4,0,70))";
+            ef_vis_kfFade(u, at + cd * 0.8, 0.4, 70);
         }
     }
 
@@ -1037,8 +1122,7 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
     rg.addProperty("ADBE Vector Graphic - Fill")
       .property("ADBE Vector Fill Color").setValue([0.35, 0.38, 0.45]);
     rule.property("Position").setValue([comp.width / 2, comp.height * 0.50]);
-    rule.property("Scale").expression =
-        "var t=time-inPoint-0.3;var p=(t<=0)?0:((t>=0.5)?1:easeOut(t,0,0.5,0,1));[100,p*100]";
+    ef_vis_kf(rule.property("Scale"), [[0.3, [100, 0]], [0.8, [100, 100]]], "out");
 
     if (spec.caption) {
         var cap = comp.layers.addText(String(spec.caption));

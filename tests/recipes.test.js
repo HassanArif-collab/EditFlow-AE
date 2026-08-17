@@ -152,8 +152,10 @@ test('their archetypes map to my recipes', () => {
 });
 
 test('an archetype AE cannot build returns null, the signal to generate it', () => {
-  assert.equal(R.recipeForArchetype('PIE_CHART'), null);
-  assert.equal(R.recipeForArchetype('FLOW_DIAGRAM'), null);
+  // every archetype the other repo emits is buildable now, so the guard is
+  // checked against one nobody has defined — which is the case it exists for
+  assert.equal(R.recipeForArchetype('HOLOGRAM_TABLE'), null);
+  assert.equal(R.recipeForArchetype(''), null);
 });
 
 test('the honoured technique list only contains techniques of BUILT recipes', () => {

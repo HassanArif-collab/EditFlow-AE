@@ -87,11 +87,11 @@ test('invalid JSON reports an error instead of throwing', () => {
 test('unsupported archetypes are reported as skipped, never silently dropped', () => {
   const r = M.parseShotlist(JSON.stringify({ shots: [
     statShot({ value: 1, title: 'a' }),
-    { id: 'shot_02', archetype: 'PIE_CHART', durationInFrames: 90, props: {} },
+    { id: 'shot_02', archetype: 'HOLOGRAM_TABLE', durationInFrames: 90, props: {} },
   ] }));
   assert.equal(r.shots.length, 1, 'only the supported shot builds');
   assert.equal(r.skipped.length, 1);
-  assert.match(r.skipped[0], /PIE_CHART/);
+  assert.match(r.skipped[0], /HOLOGRAM_TABLE/);
 });
 
 test('one broken shot does not lose the others', () => {
@@ -320,9 +320,10 @@ test('recipe wins over archetype, and archetype still works alone', () => {
 });
 
 test('an archetype AE cannot build names itself in the reason', () => {
-  // PIE_CHART has no recipe at all — After Effects simply cannot make it
-  const r = M.normalizeShot({ id: 's', archetype: 'PIE_CHART', props: {} }, { fps: 30 });
-  assert.match(r.error, /PIE_CHART/, 'the recipe name alone would not say which shot');
+  // all twelve of their archetypes build now, so this checks the path for an
+  // archetype nobody has taught AE about yet
+  const r = M.normalizeShot({ id: 's', archetype: 'HOLOGRAM_TABLE', props: {} }, { fps: 30 });
+  assert.match(r.error, /HOLOGRAM_TABLE/, 'the recipe name alone would not say which shot');
   assert.match(r.error, /generate/);
 });
 

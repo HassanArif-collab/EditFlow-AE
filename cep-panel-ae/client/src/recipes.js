@@ -139,6 +139,61 @@ export const RECIPES = {
     },
   },
 
+  TEXT_ANNOTATION: {
+    status: 'built',
+    archetypes: ['TEXT_ANNOTATION'],
+    summary: 'A text label placed over an image, a chart, or bare background.',
+    use: 'Naming what is on screen — a caption on a photo, a call-out on a ' +
+         'diagram, a figure attributed to its source. The third most used ' +
+         'archetype in the real corpus.',
+    techniques: ['PUSH_IN', 'KEN_BURNS'],
+    params: {
+      text: { type: 'string', required: true, help: 'The label. One or two lines.' },
+      place: { type: 'enum', default: 'lower_left',
+               values: ['lower_left', 'lower_right', 'upper_left', 'upper_right',
+                        'center', 'lower_center'],
+               help: 'Where it sits in frame.' },
+      boxed: { type: 'boolean', default: true,
+               help: 'A backing plate behind the text, so it reads over any image.' },
+      size: { type: 'enum', default: 'normal', values: ['small', 'normal', 'large'],
+              help: 'small for an attribution, large for a statement.' },
+      sub: { type: 'string', default: '',
+             help: 'A quieter second line — a source, a date, a unit.' },
+    },
+  },
+
+  PIE_CHART: {
+    status: 'built',
+    archetypes: ['PIE_CHART'],
+    summary: 'Slices arriving one at a time, the named one pulled out.',
+    use: 'A share of a whole, when the parts matter more than their exact size. ' +
+         'A bar chart is easier to read for close values.',
+    techniques: [],
+    params: {
+      slices: { type: 'array', required: true,
+                help: 'Array of {label, value, accent}. Three to six reads best.' },
+      caption: { type: 'string', default: '', help: 'One line above the chart.' },
+      accentIndex: { type: 'number', default: null,
+                     help: 'Which slice the script names. It is pulled out from the centre.' },
+    },
+  },
+
+  FLOW_DIAGRAM: {
+    status: 'built',
+    archetypes: ['FLOW_DIAGRAM'],
+    summary: 'Steps in a row, connectors drawing between them in sequence.',
+    use: 'A process the narration walks through — how a payment moves, how a ' +
+         'decision is made. Two to five steps.',
+    techniques: [],
+    params: {
+      steps: { type: 'array', required: true,
+               help: 'Array of {label, accent} or plain strings, in order.' },
+      caption: { type: 'string', default: '', help: 'One line above the row.' },
+      stepDur: { type: 'number', default: 0.55,
+                 help: 'Seconds between one step landing and the next starting.' },
+    },
+  },
+
   ASSET_REVEAL: {
     status: 'built',
     archetypes: ['BROLL_VIDEO', 'GSAP_METAPHOR', 'EMOTIONAL_MOMENT'],

@@ -9,7 +9,7 @@ without conflict.
 The panel refuses any recipe not listed here, and any prop that does not
 typecheck, showing you what it refused instead of building something wrong.
 
-**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`, `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `PROOF_STACK`, `ASSET_REVEAL`
+**Built today:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`, `LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `PROOF_STACK`, `TEXT_ANNOTATION`, `PIE_CHART`, `FLOW_DIAGRAM`, `ASSET_REVEAL`
 **Planned:** 
 
 ## Techniques
@@ -39,15 +39,16 @@ A technique a recipe does not honour still builds and shows on the row as
 | `STAT_COUNTER` | `STAT_COUNTER` | build in AE now |
 | `BAR_CHART` | `BAR_CHART` | build in AE now |
 | `LINE_GRAPH` | `LINE_GRAPH` | build in AE now |
-| `PIE_CHART` | — | generate it; After Effects has no builder |
+| `PIE_CHART` | `PIE_CHART` | build in AE now |
 | `COMPARISON_PANEL` | `COMPARISON_PANEL` | build in AE now |
-| `FLOW_DIAGRAM` | — | generate it; After Effects has no builder |
+| `FLOW_DIAGRAM` | `FLOW_DIAGRAM` | build in AE now |
 | `SCREENSHOT_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
 | `DOC_HIGHLIGHT` | `DOC_HIGHLIGHT` | build in AE now |
 | `GSAP_METAPHOR` | `ASSET_REVEAL` | build in AE now |
 | `EMOTIONAL_MOMENT` | `ASSET_REVEAL` | build in AE now |
 | `BROLL_VIDEO` | `ASSET_REVEAL` | build in AE now |
 | `PROOF_STACK` | `PROOF_STACK` | build in AE now |
+| `TEXT_ANNOTATION` | `TEXT_ANNOTATION` | build in AE now |
 
 ## Common props
 
@@ -193,6 +194,62 @@ Several images cut back to back on a rhythm, not one long hold.
 | `rhythm` | `auto` \| `tightening` \| `even` |  | `"auto"` | auto: tighten for a few images, even for many. tightening accelerates into the last shot; even is a steady montage. |
 | `holdLast` | number |  | `0.8` | Extra seconds on the final image — the one the point lands on. |
 | `zoom` | number |  | `1.06` | Per-image scale if a technique is set. Small: these are quick cuts. |
+
+### `TEXT_ANNOTATION`
+
+✅ built
+
+A text label placed over an image, a chart, or bare background.
+
+**Use when:** Naming what is on screen — a caption on a photo, a call-out on a diagram, a figure attributed to its source. The third most used archetype in the real corpus.
+
+**Covers archetypes:** `TEXT_ANNOTATION`
+
+**Send `technique`:** `NONE` or `PUSH_IN` or `KEN_BURNS`
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `text` | string | **yes** |  | The label. One or two lines. |
+| `place` | `lower_left` \| `lower_right` \| `upper_left` \| `upper_right` \| `center` \| `lower_center` |  | `"lower_left"` | Where it sits in frame. |
+| `boxed` | boolean |  | `true` | A backing plate behind the text, so it reads over any image. |
+| `size` | `small` \| `normal` \| `large` |  | `"normal"` | small for an attribution, large for a statement. |
+| `sub` | string |  | `""` | A quieter second line — a source, a date, a unit. |
+
+### `PIE_CHART`
+
+✅ built
+
+Slices arriving one at a time, the named one pulled out.
+
+**Use when:** A share of a whole, when the parts matter more than their exact size. A bar chart is easier to read for close values.
+
+**Covers archetypes:** `PIE_CHART`
+
+**Send `technique`:** `NONE`
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `slices` | array | **yes** |  | Array of {label, value, accent}. Three to six reads best. |
+| `caption` | string |  | `""` | One line above the chart. |
+| `accentIndex` | number |  | — | Which slice the script names. It is pulled out from the centre. |
+
+### `FLOW_DIAGRAM`
+
+✅ built
+
+Steps in a row, connectors drawing between them in sequence.
+
+**Use when:** A process the narration walks through — how a payment moves, how a decision is made. Two to five steps.
+
+**Covers archetypes:** `FLOW_DIAGRAM`
+
+**Send `technique`:** `NONE`
+
+| prop | type | required | default | meaning |
+|---|---|---|---|---|
+| `steps` | array | **yes** |  | Array of {label, accent} or plain strings, in order. |
+| `caption` | string |  | `""` | One line above the row. |
+| `stepDur` | number |  | `0.55` | Seconds between one step landing and the next starting. |
 
 ### `ASSET_REVEAL`
 

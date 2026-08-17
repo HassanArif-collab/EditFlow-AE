@@ -35,3 +35,7 @@ experiments/
 *.mov
 *.wav
 !tests/fixtures/**/*.wav
+
+# The prompts live in their own repo (Content-Prompts-for-AI). A snapshot here
+# goes stale silently and gets read as the truth.
+content-prompts/

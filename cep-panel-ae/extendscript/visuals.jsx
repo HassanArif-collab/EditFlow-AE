@@ -736,7 +736,10 @@ var EF_VIS_RECIPES = [
     { name: "COMPARISON_PANEL",   fn: "ef_vis_buildComparisonPanel" },
     { name: "DOC_HIGHLIGHT",      fn: "ef_vis_buildDocHighlight" },
     { name: "ASSET_REVEAL",       fn: "ef_vis_buildAssetReveal" },
-    { name: "PROOF_STACK",        fn: "ef_vis_buildProofStack" }
+    { name: "PROOF_STACK",        fn: "ef_vis_buildProofStack" },
+    { name: "TEXT_ANNOTATION",    fn: "ef_vis_buildTextAnnotation" },
+    { name: "PIE_CHART",          fn: "ef_vis_buildPieChart" },
+    { name: "FLOW_DIAGRAM",       fn: "ef_vis_buildFlowDiagram" }
 ];
 
 function ef_vis_builderFor(name) {
@@ -1165,6 +1168,274 @@ function ef_vis_buildComparisonPanel(comp, spec, cfg, missing) {
         ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
         ef_vis_centerAnchor(cap, comp, 0.5, 0.18, 0.1);
         ef_vis_fitText(cap, comp, cfg, 0.1);
+    }
+    return 1;
+}
+
+/* ── TEXT_ANNOTATION ───────────────────────────────────────
+   A label over whatever is behind it. Third most used archetype in the real
+   corpus, and the cheapest to get wrong: white text straight onto a photo is
+   unreadable half the time, so the backing plate is on by default. */
+function ef_vis_buildTextAnnotation(comp, spec, cfg, missing) {
+    var hasAsset = (spec.assets && spec.assets.length) || spec.bgSrc;
+    if (hasAsset) {
+        var aName = (spec.assets && spec.assets.length) ? spec.assets[0] : spec.bgSrc;
+        var item = ef_vis_importAsset(aName, cfg, spec, false);
+        if (item) {
+            var bgL = comp.layers.add(item);
+            bgL.name = String(aName);
+            ef_vis_fitLayer(bgL, comp, spec.fit || "fill");
+            ef_vis_applyTechnique(bgL, comp, spec,
+                { scalable: true, zoom: spec.zoom || 1.08, dur: comp.duration });
+            bgL.moveToEnd();
+        } else {
+            missing.push(String(aName));
+            ef_vis_placeholderSolid(comp, aName).moveToEnd();
+        }
+    } else {
+        ef_vis_addBackground(comp, spec, cfg, missing);
+    }
+
+    var sizes = { small: 0.030, normal: 0.045, large: 0.070 };
+    var px = Math.round(comp.height * (sizes[String(spec.size || "normal")] || sizes.normal));
+    var spots = {
+        lower_left:   [0.28, 0.80], lower_right:  [0.72, 0.80],
+        upper_left:   [0.28, 0.18], upper_right:  [0.72, 0.18],
+        center:       [0.50, 0.50], lower_center: [0.50, 0.82]
+    };
+    var at = spots[String(spec.place || "lower_left")] || spots.lower_left;
+
+    var t = comp.layers.addText(String(spec.text || ""));
+    t.name = "Label";
+    ef_vis_styleText(t, cfg, spec, px, [1, 1, 1]);
+    ef_vis_centerAnchor(t, comp, at[0], at[1], 0.1);
+    ef_vis_fitText(t, comp, cfg, 0.1);
+
+    var sub = null;
+    if (spec.sub) {
+        sub = comp.layers.addText(String(spec.sub));
+        sub.name = "Sub";
+        ef_vis_styleText(sub, cfg, spec, Math.round(px * 0.55), [0.78, 0.81, 0.86]);
+        ef_vis_centerAnchor(sub, comp, at[0], at[1] + (px * 1.15) / comp.height, 0.1);
+    }
+
+    if (spec.boxed !== false) {
+        // measured off the text, so the plate always fits what sits on it
+        var r = { width: comp.width * 0.4, height: px * 1.6 };
+        try { r = t.sourceRectAtTime(0.1, false); } catch (eR) {}
+        var padX = px * 0.6, padY = px * 0.45;
+        var pw = r.width + padX * 2;
+        var ph = r.height + padY * 2 + (sub ? px * 0.9 : 0);
+        var plate = comp.layers.addShape();
+        plate.name = "Plate";
+        var pg = plate.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                      .property("ADBE Vectors Group");
+        var prect = pg.addProperty("ADBE Vector Shape - Rect");
+        prect.property("ADBE Vector Rect Size").setValue([pw, ph]);
+        try { prect.property("ADBE Vector Rect Roundness").setValue(Math.round(px * 0.22)); } catch (eRo) {}
+        pg.addProperty("ADBE Vector Graphic - Fill")
+          .property("ADBE Vector Fill Color").setValue([0.04, 0.05, 0.08]);
+        plate.property("Opacity").setValue(78);
+        plate.property("Position").setValue(
+            [comp.width * at[0], comp.height * at[1] + (sub ? px * 0.45 : 0)]);
+        try { plate.moveAfter(sub || t); } catch (eM) {}
+        ef_vis_kf(plate.property("Scale"), [[0, [0, 100]], [0.42, [100, 100]]], "smooth");
+    }
+
+    ef_vis_kfFade(t, 0.18, 0.4, 100);
+    if (sub) ef_vis_kfFade(sub, 0.34, 0.4, 100);
+    return 1;
+}
+
+/* ── PIE_CHART ─────────────────────────────────────────────
+   Slices as filled wedge paths, arriving one at a time. The named slice is
+   pulled out from the centre — the one thing a pie does better than a bar
+   chart is make "this part of the whole" physical. */
+function ef_vis_buildPieChart(comp, spec, cfg, missing) {
+    ef_vis_addBackground(comp, spec, cfg, missing);
+
+    var slices = spec.slices || [], n = slices.length, i;
+    if (!n) { ef_vis_placeholderSolid(comp, "PIE_CHART needs slices"); return 1; }
+    var total = 0;
+    for (i = 0; i < n; i++) total += Math.abs(Number(slices[i].value) || 0);
+    if (total <= 0) { ef_vis_placeholderSolid(comp, "PIE_CHART slices are all zero"); return 1; }
+
+    var cx = comp.width * 0.42, cy = comp.height * 0.56;
+    var R = Math.min(comp.width, comp.height) * 0.26;
+
+    var accentIdx = -1;
+    var wanted = Number(spec.accentIndex);
+    if (wanted >= 0 && wanted < n) accentIdx = wanted;
+    else { for (i = 0; i < n; i++) if (slices[i].accent) accentIdx = i; }
+
+    var greys = [[0.30, 0.34, 0.42], [0.40, 0.44, 0.52], [0.24, 0.27, 0.34],
+                 [0.46, 0.50, 0.58], [0.34, 0.38, 0.46], [0.20, 0.23, 0.29]];
+    var angle = -Math.PI / 2;                       // start at twelve o'clock
+    var labels = [];
+
+    for (i = 0; i < n; i++) {
+        var frac = Math.abs(Number(slices[i].value) || 0) / total;
+        var sweep = frac * Math.PI * 2;
+        var mid = angle + sweep / 2;
+
+        // a wedge is the centre plus an arc walked in small steps
+        var verts = [[0, 0]];
+        var steps = Math.max(4, Math.ceil(sweep / 0.12));
+        for (var k = 0; k <= steps; k++) {
+            var a = angle + sweep * (k / steps);
+            verts.push([Math.cos(a) * R, Math.sin(a) * R]);
+        }
+        var sl = comp.layers.addShape();
+        sl.name = "Slice " + (i + 1) + (i === accentIdx ? " (accent)" : "");
+        var sg = sl.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                   .property("ADBE Vectors Group");
+        var shp = new Shape();
+        shp.vertices = verts;
+        shp.closed = true;
+        sg.addProperty("ADBE Vector Shape - Group").property("ADBE Vector Shape").setValue(shp);
+        sg.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")
+          .setValue(i === accentIdx ? (spec.accent || [0.72, 0.53, 0.04]) : greys[i % greys.length]);
+
+        var off = (i === accentIdx) ? R * 0.09 : 0;   // the named slice sits proud
+        sl.property("Position").setValue([cx + Math.cos(mid) * off, cy + Math.sin(mid) * off]);
+
+        var at = 0.25 + i * 0.22;
+        ef_vis_kf(sl.property("Scale"), [[at, [0, 0]], [at + 0.45, [100, 100]]], "smooth");
+
+        // labels are made AFTER every slice: each new layer lands on top, so a
+        // label written here disappears under the next slice drawn over it
+        if (slices[i].label) {
+            labels.push({ text: String(slices[i].label) + "  " + Math.round(frac * 100) + "%",
+                          mid: mid, accent: (i === accentIdx), at: at + 0.4, n: i + 1 });
+        }
+        angle += sweep;
+    }
+
+    for (i = 0; i < labels.length; i++) {
+        var L = labels[i];
+        var lab = comp.layers.addText(L.text);
+        lab.name = "Label " + L.n;
+        // Every label is light. The accent colour on the accent label put gold
+        // text over the gold slice and half the word vanished — the slice being
+        // pulled out already says which one the script means.
+        ef_vis_styleText(lab, cfg, spec, Math.round(comp.height * 0.030),
+                         L.accent ? [1, 1, 1] : [0.78, 0.81, 0.87]);
+
+        // Sit OUTSIDE the rim and read away from it: a label on the right is
+        // left-aligned at the edge, one on the left is right-aligned. Centring
+        // pushes half the text back over the pie.
+        var pad = comp.width * 0.02;
+        var rimX = cx + Math.cos(L.mid) * (R * 1.10);
+        var ly = cy + Math.sin(L.mid) * (R * 1.16);
+        var w = comp.width * 0.2;
+        try { w = lab.sourceRectAtTime(0.1, false).width; } catch (eW) {}
+        var lx;
+        if (Math.cos(L.mid) > 0.20) {
+            lx = rimX + pad + w / 2;                       // right side, reads outward
+        } else if (Math.cos(L.mid) < -0.20) {
+            lx = rimX - pad - w / 2;                       // left side
+        } else {
+            lx = cx;                                       // straight up or down
+            ly = cy + Math.sin(L.mid) * (R * 1.30);
+        }
+        if (lx + w / 2 > comp.width * 0.98) lx = comp.width * 0.98 - w / 2;
+        if (lx - w / 2 < comp.width * 0.02) lx = comp.width * 0.02 + w / 2;
+        ef_vis_centerAnchor(lab, comp, lx / comp.width, ly / comp.height, 0.1);
+        ef_vis_kfFade(lab, L.at, 0.35, 100);
+    }
+
+    if (spec.caption) {
+        var cap = comp.layers.addText(String(spec.caption));
+        cap.name = "Caption";
+        ef_vis_styleText(cap, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_centerAnchor(cap, comp, 0.5, 0.14, 0.1);
+        ef_vis_fitText(cap, comp, cfg, 0.1);
+    }
+    return 1;
+}
+
+/* ── FLOW_DIAGRAM ──────────────────────────────────────────
+   Steps in a row with connectors drawing between them, in the order the
+   narration walks through. Each connector lands just before the box it
+   points at, so the eye is led rather than chased. */
+function ef_vis_buildFlowDiagram(comp, spec, cfg, missing) {
+    ef_vis_addBackground(comp, spec, cfg, missing);
+
+    var raw = spec.steps || [], n = raw.length, i;
+    if (!n) { ef_vis_placeholderSolid(comp, "FLOW_DIAGRAM needs steps"); return 1; }
+
+    var steps = [];
+    for (i = 0; i < n; i++) {
+        var st = raw[i];
+        steps.push((st && typeof st === "object")
+            ? { label: String(st.label || ""), accent: !!st.accent }
+            : { label: String(st), accent: false });
+    }
+
+    var gap = comp.width * 0.035;
+    var boxW = Math.min(comp.width * 0.22, (comp.width * 0.86 - gap * (n - 1)) / n);
+    var boxH = comp.height * 0.20;
+    var totalW = boxW * n + gap * (n - 1);
+    var left = (comp.width - totalW) / 2;
+    var cy = comp.height * 0.52;
+    var step = (spec.stepDur == null) ? 0.55 : spec.stepDur;
+
+    for (i = 0; i < n; i++) {
+        var bx = left + i * (boxW + gap) + boxW / 2;
+        var at = 0.2 + i * step;
+
+        if (i > 0) {
+            var conn = comp.layers.addShape();
+            conn.name = "Link " + i;
+            var cg = conn.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                         .property("ADBE Vectors Group");
+            var line = new Shape();
+            line.vertices = [[-gap / 2, 0], [gap / 2, 0]];
+            line.closed = false;
+            cg.addProperty("ADBE Vector Shape - Group")
+              .property("ADBE Vector Shape").setValue(line);
+            var strk = cg.addProperty("ADBE Vector Graphic - Stroke");
+            strk.property("ADBE Vector Stroke Color").setValue([0.50, 0.54, 0.62]);
+            strk.property("ADBE Vector Stroke Width").setValue(Math.max(2, comp.height * 0.004));
+            conn.property("Position").setValue([bx - boxW / 2 - gap / 2, cy]);
+            var trim = conn.property("ADBE Root Vectors Group")
+                           .addProperty("ADBE Vector Filter - Trim");
+            ef_vis_kf(trim.property("ADBE Vector Trim End"),
+                      [[at - step * 0.45, 0], [at - step * 0.05, 100]], "smooth");
+        }
+
+        var box = comp.layers.addShape();
+        box.name = "Step " + (i + 1) + (steps[i].accent ? " (accent)" : "");
+        var bgp = box.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group")
+                     .property("ADBE Vectors Group");
+        var br = bgp.addProperty("ADBE Vector Shape - Rect");
+        br.property("ADBE Vector Rect Size").setValue([boxW, boxH]);
+        try { br.property("ADBE Vector Rect Roundness").setValue(Math.round(comp.height * 0.014)); } catch (eRr) {}
+        bgp.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")
+           .setValue(steps[i].accent ? (spec.accent || [0.72, 0.53, 0.04]) : [0.16, 0.18, 0.24]);
+        var bs = bgp.addProperty("ADBE Vector Graphic - Stroke");
+        bs.property("ADBE Vector Stroke Color").setValue([0.34, 0.38, 0.46]);
+        bs.property("ADBE Vector Stroke Width").setValue(2);
+        box.property("Position").setValue([bx, cy]);
+        ef_vis_kf(box.property("Scale"), [[at, [88, 88]], [at + 0.4, [100, 100]]], "smooth");
+        ef_vis_kfFade(box, at, 0.32, 100);
+
+        var lab2 = comp.layers.addText(steps[i].label);
+        lab2.name = "Step label " + (i + 1);
+        ef_vis_styleText(lab2, cfg, spec, Math.round(comp.height * 0.028),
+                         steps[i].accent ? [0.06, 0.07, 0.10] : [0.90, 0.92, 0.95]);
+        ef_vis_centerAnchor(lab2, comp, bx / comp.width, cy / comp.height, 0.1);
+        // fit to the BOX, not the frame, or a long label runs over its neighbour
+        ef_vis_fitText(lab2, comp, { boxWidthPct: (boxW * 0.86) / comp.width * 100 }, 0.1);
+        ef_vis_kfFade(lab2, at + 0.12, 0.32, 100);
+    }
+
+    if (spec.caption) {
+        var cap2 = comp.layers.addText(String(spec.caption));
+        cap2.name = "Caption";
+        ef_vis_styleText(cap2, cfg, spec, Math.round(comp.height * 0.034), [0.85, 0.88, 0.92]);
+        ef_vis_centerAnchor(cap2, comp, 0.5, 0.20, 0.1);
+        ef_vis_fitText(cap2, comp, cfg, 0.1);
     }
     return 1;
 }

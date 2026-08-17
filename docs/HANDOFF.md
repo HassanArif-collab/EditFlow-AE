@@ -19,9 +19,9 @@ writes the brief. The two tools share exactly two files and nothing else:
 They fetch those as raw URLs off this branch. Never hand-edit `docs/recipes.md`;
 run `node scripts/gen-recipe-docs.js`. A test fails if the committed copy is stale.
 
-> ⚠ This repo also contains `content-prompts/` — a **stale snapshot** copied
-> during an earlier unify step. It is not the live source. Do not edit it and do
-> not trust it.
+> The stale `content-prompts/` snapshot has been deleted and gitignored. The
+> prompts live only in `Content-Prompts-for-AI`; a copy here goes out of date
+> silently and then gets read as the truth.
 
 ---
 
@@ -36,7 +36,7 @@ and an AI transcript-correction pass with a hallucination guard.
 
 | Piece | Where | State |
 |---|---|---|
-| Recipe registry | `cep-panel-ae/client/src/recipes.js` | 8 recipes, all built |
+| Recipe registry | `cep-panel-ae/client/src/recipes.js` | 11 recipes, all built |
 | Builders | `cep-panel-ae/extendscript/visuals.jsx` (~1600 lines) | all keyframe-based |
 | Brief parsing | `cep-panel-ae/client/src/shotlist-model.js` | full schema |
 | Panel tab | `cep-panel-ae/client/src/visuals-view.js` | tab 6 |
@@ -44,10 +44,11 @@ and an AI transcript-correction pass with a hallucination guard.
 | Demo | `samples/demo-brief.json` | 9 shots, all 8 recipes |
 | Demo assets | `samples/visuals/`, made by `scripts/make-demo-assets.py` | capture, stack stills, parallax layers |
 
-**The eight recipes:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`,
-`LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`, `PROOF_STACK`.
-That covers 10 of the other repo's 12 archetypes; only `PIE_CHART` and
-`FLOW_DIAGRAM` route to generation.
+**The eleven recipes:** `STAT_COUNTER`, `BAR_CHART`, `SECTION_TITLE_CARD`,
+`LINE_GRAPH`, `COMPARISON_PANEL`, `DOC_HIGHLIGHT`, `ASSET_REVEAL`,
+`PROOF_STACK`, `TEXT_ANNOTATION`, `PIE_CHART`, `FLOW_DIAGRAM`. **Every
+archetype the other repo emits now builds in After Effects** — nothing is
+forced to generation for want of a builder.
 
 **Techniques:** `NONE`, `PUSH_IN`, `KEN_BURNS`, `DOC_SCROLL`, `PARALLAX_2_5D`,
 `DUST_DISSOLVE`. Each recipe declares which it honours; anything else shows on
@@ -156,6 +157,18 @@ Three bugs only the live pass could find, all fixed:
   realm, different prototype. Compare elements.
 - **ExtendScript is ES3.** No `let`/`const`/arrow/`JSON`/`forEach`/
   `toLocaleString`. A test enforces this.
+- **A new layer goes on TOP.** Writing a label inside the loop that also draws
+  shapes means the next shape covers it. Draw all the shapes, then all the text.
+- **A layer is positioned by its ANCHOR, the centre of the source** — not its
+  top-left. Scroll and offset maths that assumes top-left looks plausible in a
+  dump and wrong in a render.
+- **Accent-coloured text over an accent-coloured shape is invisible.** The pie's
+  accent label was gold on gold and half the word disappeared.
+- **Exact string matching is fine for a scriptLine diff and wrong for page
+  text** — the other repo found a script paraphrases its source rather than
+  quoting it, so a contiguous-quote search found nothing on a real page. They
+  score paragraphs by shared distinctive terms, numbers first. Do not reuse
+  exact matching for anything touching a captured page.
 - **After Effects discards unsaved projects on close.** Not a panel bug and not
   recoverable. Save the `.aep` before building.
 - **`saveFrameToPng` returns before the bytes are flushed.** Re-stat in a loop.
